@@ -21,6 +21,7 @@ import MinimalHeader from "./components/layout/Header/MinimalHeader";
 import EditorialBoard from "./pages/Editor-Board/EditorialBoard";
 import ManuscriptLoginPage from "./pages/ManuscriptLoginPage/ManuscriptLoginPage";
 import PoweredTrustPage from "./pages/PoweredTrustPage/PoweredTrustPage";
+import OtpVerificationPage from "./pages/OtpVerificationPage/OtpVerificationPage";
 
 // import SearchResults from "./pages/SearchResults/SearchResults";
 // import NotFound from "./pages/NotFound/NotFound";
@@ -253,6 +254,14 @@ function App() {
           element={
             <Layout minimal>
               <AuthPage mode="register" />
+            </Layout>
+          }
+        />
+        <Route
+          path="/auth/verify-otp"
+          element={
+            <Layout minimal>
+              <OtpVerificationPage />
             </Layout>
           }
         />

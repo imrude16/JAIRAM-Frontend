@@ -1,12 +1,18 @@
 import LoginForm from "../../components/login/LoginForm";
 import RegisterForm from "../../components/register/RegisterForm";
+import OtpVerificationPage from "../OtpVerificationPage/OtpVerificationPage";
 
 const AuthPage = ({ mode }) => {
   const isLogin = mode === "login";
+  const isVerifyOtp = mode === "verify-otp";
 
   const switchRoute = () => {
     window.location.hash = isLogin ? "#/auth/register" : "#/auth/login";
   };
+  // OTP Page
+  if (isVerifyOtp) {
+    return <OtpVerificationPage />;
+  }
 
   // For Register page - no wrapper needed as RegisterForm has its own layout
   if (!isLogin) {
@@ -19,9 +25,7 @@ const AuthPage = ({ mode }) => {
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-semibold text-slate-800 mb-2">
-          Log In
-          </h1>
+          <h1 className="text-3xl font-semibold text-slate-800 mb-2">Log In</h1>
           <p className="text-slate-600 text-sm">
             Access your journal dashboard and submissions
           </p>
