@@ -118,7 +118,8 @@ const RegisterForm = () => {
         throw new Error(data.message || "Registration failed");
       }
 
-      alert("Account created successfully");
+      alert("Account created successfully. Please verify OTP.");
+      window.location.hash = "#/auth/verify-otp";
 
       setForm({
         firstName: "",
