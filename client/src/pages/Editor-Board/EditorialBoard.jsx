@@ -108,6 +108,30 @@ const EditorialBoard = () => {
         "Community Medicine, Public Health, Epidemiology, Preventive and Social Medicine",
     },
     {
+      name: "Dr. Arpita Singh",
+      role: "Pharmacology",
+      degree: "MBBS, MD ,Pharmacology",
+      designation: "Professor and Head",
+      department: "Pharmacology",
+      institution:
+        "Dr. Ram Manohar Lohia Institute of Medical Sciences, Lucknow, U.P , India",
+      email: "drarpitasingh21@gmail.com",
+      expertise:
+        "Clinical Pharmacology including Pharmacovigilance,Tuberculosis & Respiratory Diseases,Diabetes Mellitus,Anti-Microbial Resistance,Cancer Therapeutics",
+    },
+     {
+      name: "Dr. Ajay Kumar Verma",
+      role: "Respiratory Medicine",
+      degree: "MBBS, MD(Respiratory Medicine)",
+      designation: "Professor and Head",
+      department: "Respiratory Medicine",
+      institution:
+        "Dr. Ram Manohar Lohia Institute of Medical Sciences, Lucknow, U.P , India",
+      email: "drajay21@gmail.com",
+      expertise:
+        "Tuberculosis and other infectious lung diseases,Airway Disorders(Asthma & COPD),Interstitial Lung Diseases,Lung Cancer & Immunology,Pulmonary Rehabilitation & Yoga,Sleep & Metabolic Disorders",
+    },
+    {
       name: "Dr. Durga Prasad Singh",
       role: "Internal Medicine",
       degree: "MBBS, MD (Internal Medicine)",
