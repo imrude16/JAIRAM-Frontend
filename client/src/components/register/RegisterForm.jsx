@@ -110,7 +110,7 @@ const RegisterForm = () => {
         agree1: false,
         agree2: false,
       });
-    } catch (err) {
+    } catch {
       alert("Something went wrong on frontend. Please check your form.");
     } finally {
       setLoading(false);
