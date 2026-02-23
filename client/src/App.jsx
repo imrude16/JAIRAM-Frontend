@@ -1,11 +1,11 @@
 import {
-  HashRouter as Router,
+  BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
   useLocation,
 } from "react-router-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";  // eslint-disable-next-line no-unused-vars
 import { Toaster } from "react-hot-toast"; 
 import Header from "./components/layout/Header/Header";
 import Footer from "./components/layout/Footer/Footer";

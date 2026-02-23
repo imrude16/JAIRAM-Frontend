@@ -439,7 +439,7 @@ const RegisterForm = () => {
               {/* ORCID */}
               <div>
                 <label className="block text-sm sm:text-base font-semibold text-gray-700 mb-2">
-                  ORCID <span className="text-red-500">*</span>
+                  ORCID (Optional)
                 </label>
                 <input
                   placeholder="0000-0000-0000-0000"
@@ -448,7 +448,6 @@ const RegisterForm = () => {
                   pattern="\d{4}-\d{4}-\d{4}-\d{4}"
                   title="Format: 0000-0000-0000-0000"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all duration-200 text-sm sm:text-base"
-                  required
                   disabled={loading}
                 />
               </div>
