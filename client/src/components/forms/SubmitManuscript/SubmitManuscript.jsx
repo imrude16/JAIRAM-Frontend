@@ -142,6 +142,18 @@ const searchRegisteredUsers = async (query, excludeEmails = []) => {
   return []; // returns empty until backend is connected
 };
 
+/**
+ * Search co-authors by name, email, or phone.
+ * TODO: Replace with real API call once backend is ready.
+ */
+const searchCoAuthors = async (query, excludeEmails = []) => {
+  // TODO: replace with real API call, e.g.:
+  // const res = await fetch(`/api/coauthors/search?q=${encodeURIComponent(query)}`);
+  // const data = await res.json();
+  // return data.filter(u => !excludeEmails.includes(u.email));
+  return []; // returns empty until backend is connected
+};
+
 const onlyNumbers = (e) => {
   if (e.ctrlKey || e.metaKey || e.key.length > 1) return;
   if (!/[0-9]/.test(e.key)) e.preventDefault();
@@ -797,7 +809,7 @@ const CopyrightModal = ({ isOpen, onClose, onAccepted }) => {
   const handleAgree = (checked) => {
     setAgreed(checked);
     if (checked) {
-      onAccepted(); // 🔥 notify parent
+      onAccepted();
       setTimeout(() => onClose(), 650);
     }
   };
@@ -1246,7 +1258,92 @@ const ReviewerModal = ({ isOpen, onClose, reviewers, setReviewers }) => {
   );
 };
 
-const AuthorForm = ({ draft, setDraft, onAdd, onCancel }) => {
+/* ── Co-Author Search Box ── */
+const CoAuthorSearchBox = ({ onSelect, existingEmails }) => {
+  const [query, setQuery] = React.useState("");
+  const [results, setResults] = React.useState([]);
+  const [focused, setFocused] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    searchCoAuthors(query, existingEmails)
+      .then((data) => {
+        if (!cancelled) setResults(data);
+      })
+      .catch(() => {
+        if (!cancelled) setResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [query]);
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setTimeout(() => setFocused(false), 200)}
+          placeholder="Search co-author by name, email, or phone number…"
+          className="w-full pl-10 pr-4 py-3 border-2 border-[#c8d5e4] rounded-xl text-sm outline-none focus:border-[#0f3460] focus:ring-4 focus:ring-[#e8eef6] transition-all bg-white"
+        />
+        {loading && (
+          <Loader className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0f3460] animate-spin" />
+        )}
+      </div>
+      {focused && results.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border-2 border-[#c8d5e4] rounded-xl shadow-lg z-20 overflow-hidden max-h-56 overflow-y-auto">
+          {results.map((user) => (
+            <button
+              key={user.id || user.email}
+              type="button"
+              onMouseDown={() => {
+                onSelect(user);
+                setQuery("");
+                setResults([]);
+              }}
+              className="w-full flex items-start gap-3 px-4 py-3.5 hover:bg-[#e8eef6] transition text-left border-b border-gray-100 last:border-0"
+            >
+              <div className="w-9 h-9 rounded-full bg-[#0f3460] text-white flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">
+                {(user.firstName || "?")[0]}{(user.lastName || "?")[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-gray-800">
+                  {user.title} {user.firstName} {user.lastName}
+                </p>
+                <p className="text-xs text-[#0f3460] font-medium">
+                  {user.department} · {user.country}
+                </p>
+                <p className="text-xs text-gray-400 truncate">{user.email} {user.phone ? `· ${user.phone}` : ""}</p>
+              </div>
+              <span className="text-xs bg-[#e8eef6] text-[#0f3460] border border-[#b8cfe0] px-2 py-1 rounded-lg font-semibold shrink-0 mt-1">
+                Select
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {focused && !loading && query.trim().length >= 2 && results.length === 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border-2 border-[#c8d5e4] rounded-xl shadow-lg z-20 px-4 py-3 text-sm text-gray-500">
+          No registered co-authors found. Fill in the details manually below.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AuthorForm = ({ draft, setDraft, onAdd, onCancel, existingEmails }) => {
   const fields = [
     {
       key: "firstName",
@@ -1296,10 +1393,25 @@ const AuthorForm = ({ draft, setDraft, onAdd, onCancel }) => {
       key: "ORCID",
       label: "ORCID",
       type: "text",
-      placeholder: "Enter ORCID",
-      required: true,
+      placeholder: "Enter ORCID (optional)",
+      required: false,
     },
   ];
+
+  const handleSelectCoAuthor = (user) => {
+    setDraft((p) => ({
+      ...p,
+      title: user.title || p.title,
+      firstName: user.firstName || "",
+      lastName: user.lastName || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      department: user.department || "",
+      country: user.country || "",
+      ORCID: user.ORCID || "",
+    }));
+  };
+
   return (
     <div className="border-2 border-[#b8cfe0] bg-[#e8eef6]/40 rounded-2xl p-7 space-y-6">
       <div className="flex items-center gap-2">
@@ -1310,6 +1422,24 @@ const AuthorForm = ({ draft, setDraft, onAdd, onCancel }) => {
           New Author Details
         </h4>
       </div>
+
+      {/* Co-Author Search */}
+      <div className="border-2 border-[#b8cfe0] bg-white rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <Search className="w-4 h-4 text-[#0f3460]" />
+          <h5 className="text-xs font-bold text-[#0f3460] uppercase tracking-wider">
+            Search Registered Co-Author
+          </h5>
+        </div>
+        <p className="text-xs text-gray-500">
+          Search by name, email, or phone number to auto-fill co-author details.
+        </p>
+        <CoAuthorSearchBox
+          onSelect={handleSelectCoAuthor}
+          existingEmails={existingEmails}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         <div>
           <FieldLabel required>Title</FieldLabel>
@@ -1638,7 +1768,6 @@ const SubmitManuscript = () => {
   const [copyrightFormAccepted, setCopyrightFormAccepted] =
     React.useState(false);
   const [copeAccepted, setCopeAccepted] = React.useState(false);
-  const [icmjeAccepted, setIcmjeAccepted] = React.useState(false);
   const [authorDraft, setAuthorDraft] = React.useState({
     title: "Dr.",
     firstName: "",
@@ -1659,9 +1788,7 @@ const SubmitManuscript = () => {
   const [reviewers, setReviewers] = React.useState([{ ...EMPTY_REVIEWER }]);
 
   // ── Corresponding author state ──
-  // selfCorresponding: user checked "Set Yourself as Corresponding Author"
   const [selfCorresponding, setSelfCorresponding] = React.useState(false);
-  // correspondingError: true when Save & Continue clicked with no corresponding author
   const [correspondingError, setCorrespondingError] = React.useState(false);
 
   const [formData, setFormData] = React.useState({
@@ -1708,9 +1835,7 @@ const SubmitManuscript = () => {
   const showProspero = ["meta", "review"].includes(formData.articleType);
   const showTrial = formData.articleType === "clinical";
 
-  // True if a co-author has been set as corresponding
   const coAuthorCorresponding = authors.some((a) => a.isCorresponding);
-  // True if any corresponding author has been designated (either self or co-author)
   const hasCorrespondingAuthor = selfCorresponding || coAuthorCorresponding;
 
   const handleField = (f, v) => {
@@ -1738,7 +1863,6 @@ const SubmitManuscript = () => {
     if (errors.authors) setErrors((p) => ({ ...p, authors: "" }));
   };
 
-  // When a co-author is set as corresponding, clear the self checkbox
   const handleSetAuthors = (updatedAuthors) => {
     const anyCoCorresponding = updatedAuthors.some((a) => a.isCorresponding);
     if (anyCoCorresponding && selfCorresponding) {
@@ -1748,7 +1872,6 @@ const SubmitManuscript = () => {
     if (correspondingError) setCorrespondingError(false);
   };
 
-  // When self checkbox changes, clear co-author corresponding flags
   const handleSelfCorresponding = (checked) => {
     setSelfCorresponding(checked);
     if (checked) {
@@ -1765,16 +1888,11 @@ const SubmitManuscript = () => {
           "Please answer all checklist questions before proceeding.";
       if (!copeAccepted)
         e.cope = "You must confirm COPE compliance to proceed.";
-      if (!icmjeAccepted)
-        e.icmje =
-          "You must confirm the authorship & responsibility declaration to proceed.";
     } else if (step === 1) {
       if (!files.coverLetter) e.coverLetter = "Cover letter is required.";
       if (!files.blindManuscript)
         e.blindManuscript = "Blind manuscript is required.";
-      if (!files.images?.length) e.images = "At least one figure is required.";
-      if (!files.tables?.length) e.tables = "At least one table is required.";
-      if (!files.supplements) e.supplements = "Supplementary file is required.";
+      // figures, tables, and supplements are now optional — no validation
     } else if (step === 2) {
       if (!formData.articleType) e.articleType = "Please select article type";
       if (!formData.title) e.title = "Title is required";
@@ -1807,13 +1925,11 @@ const SubmitManuscript = () => {
         e.trialRegistration = "Please select a response for Trial Registration";
     } else if (step === 3) {
       if (!authors.length) e.authors = "At least one author is required";
-      // Corresponding author is validated separately via correspondingError
     } else if (step === 4) {
       const filledReviewer = reviewers.find((r) => r.firstName || r.email);
       if (!filledReviewer)
         e.reviewers = "At least one reviewer suggestion is required.";
 
-      // 🔴 Conflict of Interest required
       if (!conflictHasConflict)
         e.conflict =
           "Please declare whether you have any conflict of interest.";
@@ -1821,17 +1937,14 @@ const SubmitManuscript = () => {
       if (conflictHasConflict === "Yes" && !conflictDetails.trim())
         e.conflictDetails = "Please provide conflict of interest details.";
 
-      // 🔴 Preview confirmation required
       if (!previewConfirmed)
         e.preview =
           "Please confirm that you have checked the manuscript preview.";
 
-      // 🔴 Copyright form must be accepted
       if (!copyrightFormAccepted)
         e.copyrightForm =
           "Please open the copyright form and accept the terms.";
 
-      // 🔴 Bottom checkbox must be checked
       if (!copyrightAgreed)
         e.copyright = "Please confirm the copyright agreement checkbox.";
     }
@@ -1843,7 +1956,6 @@ const SubmitManuscript = () => {
     if (currentStep === 0) setChecklistSubmitAttempted(true);
     if (!validateStep(currentStep)) return;
 
-    // Step 3: block & show inline error if no corresponding author — NO page refresh
     if (currentStep === 3 && !hasCorrespondingAuthor) {
       setCorrespondingError(true);
       return;
@@ -1894,7 +2006,6 @@ const SubmitManuscript = () => {
         supplements: null,
       });
       setCopeAccepted(false);
-      setIcmjeAccepted(false);
       setChecklistAnswers(Array(TOTAL_CHECKLIST).fill(null));
       setChecklistSubmitAttempted(false);
       setAuthors([]);
@@ -1936,7 +2047,6 @@ const SubmitManuscript = () => {
     "Review & Submit",
   ];
 
-  // Corresponding author display for review step
   const correspondingAuthorDisplay = (() => {
     if (selfCorresponding) return "Submitting Author (Self)";
     const ca = authors.find((a) => a.isCorresponding);
@@ -1944,6 +2054,8 @@ const SubmitManuscript = () => {
       ? `${ca.title} ${ca.firstName} ${ca.lastName} — ${ca.email || "no email"}`
       : "—";
   })();
+
+  const existingAuthorEmails = authors.map((a) => a.email).filter(Boolean);
 
   return (
     <div
@@ -2110,66 +2222,6 @@ const SubmitManuscript = () => {
                       {errors.cope && <ErrorMsg msg={errors.cope} />}
                     </div>
                   </div>
-
-                  {/* ICMJE */}
-                  <div className="rounded-2xl border-2 border-[#c8d5e4] overflow-hidden shadow-sm">
-                    <div className="flex items-center gap-3 px-7 py-5 bg-[#e0f2fe] border-b-2 border-[#a0d4e8]">
-                      <FileText className="w-5 h-5 text-[#0e7490] shrink-0" />
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-[#0e7490] text-left">
-                        Authorship &amp; Responsibility Declaration
-                      </h3>
-                    </div>
-                    <div className="px-7 py-6 space-y-4 bg-white">
-                      <label className="flex items-start gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={icmjeAccepted}
-                          onChange={(e) => {
-                            setIcmjeAccepted(e.target.checked);
-                            if (errors.icmje)
-                              setErrors((p) => ({ ...p, icmje: "" }));
-                          }}
-                          className="mt-0.5 w-4 h-4 rounded cursor-pointer shrink-0 accent-[#0e7490]"
-                        />
-                        <span className="text-sm text-gray-700 leading-relaxed text-left">
-                          I confirm the authorship and responsibility
-                          declaration on behalf of all contributors.{" "}
-                          <span className="text-red-500 font-bold">*</span>
-                        </span>
-                      </label>
-                      {icmjeAccepted && (
-                        <div className="ml-7 bg-[#e0f4fb] border border-[#a0d4e8] rounded-xl px-6 py-5">
-                          <p className="text-xs font-bold text-[#0e7490] uppercase tracking-widest mb-3 text-left">
-                            On behalf of all contributors, I confirm that:
-                          </p>
-                          <p className="text-sm text-gray-700 leading-relaxed text-left">
-                            All authors have made sufficient intellectual
-                            contributions to this work, including the concept,
-                            design, data analysis and interpretation, and the
-                            writing of the manuscript — taking public
-                            responsibility for the content and agreeing to be
-                            listed as contributors. We agree that if the editors
-                            request any data or information related to this
-                            manuscript, we will provide it or fully cooperate.
-                            Any financial or personal interests that could
-                            influence the content have been disclosed in the
-                            cover letter. We hereby transfer and assign all
-                            copyright ownership to the Journal, if the
-                            manuscript is accepted and published. The Journal
-                            will have the right to republish, produce reprints,
-                            or produce translated versions of the work. All
-                            contributors authorise me, as the corresponding
-                            author, to make required changes, handle all
-                            communication with the journal, and act as the
-                            guarantor of this manuscript. We confirm that all
-                            non-author contributors have been acknowledged and
-                            have given written permission to be named.
-                          </p>
-                        </div>
-                      )}
-                      {errors.icmje && <ErrorMsg msg={errors.icmje} />}
-                    </div>
-                  </div>
                 </div>
               )}
 
@@ -2179,7 +2231,7 @@ const SubmitManuscript = () => {
                   <SectionHeading
                     icon={Upload}
                     title="Upload Documents"
-                    subtitle="All five sections are mandatory. Upload correct file types as specified."
+                    subtitle="Cover letter and blind manuscript are mandatory. Figures, tables, and supplementary files are optional."
                   />
                   <div className="rounded-2xl overflow-hidden border border-[#b8cfe0] shadow-sm">
                     <div
@@ -2273,6 +2325,7 @@ const SubmitManuscript = () => {
                       label="Figures"
                       files={files.images}
                       max={6}
+                      required={false}
                       onAdd={(sel) => {
                         const valid = sel.filter((f) =>
                           f.name.match(/\.(doc|docx|jpg|jpeg|png)$/i),
@@ -2289,8 +2342,6 @@ const SubmitManuscript = () => {
                             ...p,
                             images: [...p.images, ...toAdd],
                           }));
-                          if (errors.images)
-                            setErrors((p) => ({ ...p, images: "" }));
                         }
                       }}
                       onRemove={(i) =>
@@ -2311,15 +2362,14 @@ const SubmitManuscript = () => {
                         });
                       }}
                       accept=".doc,.docx,.jpg,.jpeg,.png"
-                      required
-                      description="Accepted: .doc, .docx, .jpg, .jpeg, .png"
-                      hint="Word or image files"
-                      error={errors.images}
+                      description="Accepted: .doc, .docx, .jpg, .jpeg, .png (Optional)"
+                      hint="Word or image files · Optional"
                     />
                     <MultiFileUploadBox
                       label="Tables"
                       files={files.tables}
                       max={8}
+                      required={false}
                       onAdd={(sel) => {
                         const valid = sel.filter((f) =>
                           f.name.match(/\.(doc|docx|jpg|jpeg|png)$/i),
@@ -2339,8 +2389,6 @@ const SubmitManuscript = () => {
                             ...p,
                             tables: [...(p.tables || []), ...toAdd],
                           }));
-                          if (errors.tables)
-                            setErrors((p) => ({ ...p, tables: "" }));
                         }
                       }}
                       onRemove={(i) =>
@@ -2361,31 +2409,26 @@ const SubmitManuscript = () => {
                         });
                       }}
                       accept=".doc,.docx,.jpg,.jpeg,.png"
-                      required
-                      description="Accepted: .doc, .docx, .jpg, .jpeg, .png"
-                      hint="Word or image files"
-                      error={errors.tables}
+                      description="Accepted: .doc, .docx, .jpg, .jpeg, .png (Optional)"
+                      hint="Word or image files · Optional"
                     />
                     <FileUploadBox
                       label="Supplementary Files"
                       file={files.supplements}
-                      required
+                      required={false}
                       onChange={(f) => {
                         if (!f.name.match(/\.(doc|docx)$/i)) {
                           alert("Only Word files (.doc, .docx) accepted.");
                           return;
                         }
                         setFiles((p) => ({ ...p, supplements: f }));
-                        if (errors.supplements)
-                          setErrors((p) => ({ ...p, supplements: "" }));
                       }}
                       onDelete={() =>
                         setFiles((p) => ({ ...p, supplements: null }))
                       }
                       accept=".doc,.docx"
-                      description="Accepted: .doc, .docx"
-                      hint="Word document only"
-                      error={errors.supplements}
+                      description="Accepted: .doc, .docx (Optional)"
+                      hint="Word document only · Optional"
                     />
                   </div>
                 </div>
@@ -2543,7 +2586,7 @@ const SubmitManuscript = () => {
                       hasError={!!errors.keywords}
                     />
                     <p className="text-xs text-gray-400 mt-1.5">
-                      Maximum 6 keywords — press{" "}
+                      Maximum 6 keywords And According to MESH standards — press{" "}
                       <span className="font-semibold">Space</span> or{" "}
                       <span className="font-semibold">Enter</span> after each
                       word to create a tag
@@ -2737,7 +2780,6 @@ const SubmitManuscript = () => {
                     color="#0e7490"
                   />
 
-                  {/* ── Author Instructions + ORCID Linking (unchanged) ── */}
                   <div className="rounded-2xl overflow-hidden border border-[#a0d4e8] shadow-sm">
                     <div
                       className="flex items-center gap-2 px-6 py-4 text-white"
@@ -2809,7 +2851,6 @@ const SubmitManuscript = () => {
                     </div>
                   </div>
 
-                  {/* ── Add Co-Author button ── */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-bold text-gray-700">
@@ -2837,10 +2878,10 @@ const SubmitManuscript = () => {
                       setDraft={setAuthorDraft}
                       onAdd={handleAddAuthor}
                       onCancel={() => setShowAuthorForm(false)}
+                      existingEmails={existingAuthorEmails}
                     />
                   )}
 
-                  {/* ── Co-Authors Table ── */}
                   <div className="overflow-x-auto rounded-2xl">
                     <AuthorsTable
                       authors={authors}
@@ -2850,7 +2891,6 @@ const SubmitManuscript = () => {
 
                   {errors.authors && <ErrorMsg msg={errors.authors} />}
 
-                  {/* ── Simple "Set Yourself as Corresponding Author" checkbox ── */}
                   <div className="flex items-center gap-3 px-5 py-4 rounded-xl border border-[#c8d5e4] bg-[#f7f9fc]">
                     <input
                       type="checkbox"
@@ -2874,7 +2914,6 @@ const SubmitManuscript = () => {
                     )}
                   </div>
 
-                  {/* ── Confirmed corresponding author badge ── */}
                   {hasCorrespondingAuthor &&
                     (() => {
                       const displayName = selfCorresponding
@@ -2896,7 +2935,6 @@ const SubmitManuscript = () => {
                       );
                     })()}
 
-                  {/* ── Inline error — shown when Save & Continue clicked with no corresponding author ── */}
                   {correspondingError && !hasCorrespondingAuthor && (
                     <div className="flex items-start gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4">
                       <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
@@ -3051,32 +3089,37 @@ const SubmitManuscript = () => {
                           value: files.coverLetter
                             ? files.coverLetter.name
                             : null,
+                          required: true,
                         },
                         {
                           label: "Blind Manuscript",
                           value: files.blindManuscript
                             ? files.blindManuscript.name
                             : null,
+                          required: true,
                         },
                         {
                           label: "Figures",
                           value: files.images.length
                             ? `${files.images.length} file${files.images.length !== 1 ? "s" : ""} uploaded`
                             : null,
+                          required: false,
                         },
                         {
                           label: "Tables",
                           value: files.tables.length
                             ? `${files.tables.length} file${files.tables.length !== 1 ? "s" : ""} uploaded`
                             : null,
+                          required: false,
                         },
                         {
                           label: "Supplementary",
                           value: files.supplements
                             ? files.supplements.name
                             : null,
+                          required: false,
                         },
-                      ].map(({ label, value }) => (
+                      ].map(({ label, value, required }) => (
                         <div
                           key={label}
                           className="flex items-center gap-4 px-7 py-4"
@@ -3089,10 +3132,14 @@ const SubmitManuscript = () => {
                               <CheckCircle className="w-4 h-4 text-[#0e7490] shrink-0" />
                               {value}
                             </span>
-                          ) : (
+                          ) : required ? (
                             <span className="flex items-center gap-2 text-sm text-red-500">
                               <AlertCircle className="w-4 h-4 shrink-0" />
                               Not uploaded
+                            </span>
+                          ) : (
+                            <span className="text-sm text-gray-400 italic">
+                              Not uploaded (optional)
                             </span>
                           )}
                         </div>
@@ -3209,8 +3256,6 @@ const SubmitManuscript = () => {
                             onChange={(e) => {
                               const val = e.target.value;
                               setConflictDetails(val);
-
-                              // ✅ Clear error only if contains letters or numbers
                               if (/[a-zA-Z0-9]/.test(val)) {
                                 if (errors.conflictDetails) {
                                   setErrors((prev) => ({
