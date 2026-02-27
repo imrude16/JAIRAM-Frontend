@@ -169,15 +169,15 @@ const welcomeTemplate = (name) => {
 };
 
 /**
- * PASSWORD RESET EMAIL TEMPLATE
+ * PASSWORD RESET EMAIL TEMPLATE (OTP-BASED)
  * 
  * Sent when user requests password reset
  * 
  * @param {string} name - User's first name
- * @param {string} resetLink - Password reset link
+ * @param {string} otp - 6-digit OTP
  * @returns {string} - HTML email content
  */
-const passwordResetTemplate = (name, resetLink) => {
+const passwordResetTemplate = (name, otp) => {
     return `
     <!DOCTYPE html>
     <html>
@@ -195,7 +195,7 @@ const passwordResetTemplate = (name, resetLink) => {
                         <tr>
                             <td style="padding: 40px 30px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px 8px 0 0;">
                                 <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: bold;">
-                                    Password Reset
+                                    Password Reset Request
                                 </h1>
                             </td>
                         </tr>
@@ -207,17 +207,21 @@ const passwordResetTemplate = (name, resetLink) => {
                                     Hello ${name},
                                 </h2>
                                 <p style="margin: 0 0 20px 0; color: #666666; font-size: 16px; line-height: 1.5;">
-                                    We received a request to reset your password. Click the button below to create a new password:
+                                    We received a request to reset your password. Use the OTP below to reset your password:
                                 </p>
                                 
-                                <div style="text-align: center; margin: 30px 0;">
-                                    <a href="${resetLink}" style="display: inline-block; padding: 15px 40px; background-color: #667eea; color: #ffffff; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold;">
-                                        Reset Password
-                                    </a>
+                                <!-- OTP Box -->
+                                <div style="background-color: #f8f9fa; border: 2px dashed #667eea; border-radius: 8px; padding: 30px; text-align: center; margin: 30px 0;">
+                                    <p style="margin: 0 0 10px 0; color: #666666; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">
+                                        Your Password Reset OTP
+                                    </p>
+                                    <h1 style="margin: 0; color: #667eea; font-size: 48px; font-weight: bold; letter-spacing: 8px;">
+                                        ${otp}
+                                    </h1>
                                 </div>
                                 
                                 <p style="margin: 20px 0; color: #666666; font-size: 14px; line-height: 1.5;">
-                                    <strong>⏰ This link will expire in 1 hour.</strong>
+                                    <strong>⏰ This OTP will expire in 10 minutes.</strong>
                                 </p>
                                 
                                 <p style="margin: 20px 0; color: #666666; font-size: 14px; line-height: 1.5;">
@@ -226,7 +230,7 @@ const passwordResetTemplate = (name, resetLink) => {
                                 
                                 <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
                                     <p style="margin: 0; color: #856404; font-size: 13px;">
-                                        <strong>Security Tip:</strong> Never share your password or reset link with anyone.
+                                        <strong>Security Tip:</strong> Never share your OTP or password with anyone.
                                     </p>
                                 </div>
                             </td>
@@ -237,6 +241,9 @@ const passwordResetTemplate = (name, resetLink) => {
                             <td style="padding: 30px; background-color: #f8f9fa; border-radius: 0 0 8px 8px; text-align: center;">
                                 <p style="margin: 0 0 10px 0; color: #999999; font-size: 12px;">
                                     © 2024 JAIRAM. All rights reserved.
+                                </p>
+                                <p style="margin: 0; color: #999999; font-size: 12px;">
+                                    Published by: Nexus Biomedical Research Foundation Trust
                                 </p>
                             </td>
                         </tr>

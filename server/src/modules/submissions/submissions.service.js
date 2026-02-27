@@ -4,6 +4,8 @@ import { Submission } from "./submissions.model.js";
 import { User } from "../users/users.model.js";
 import { sendEmail } from "../../infrastructure/email/email.service.js";
 import { CURRENT_CHECKLIST } from "../../common/constants/checklistQuestions.v1.0.0.js";
+import { SubmissionCycle } from "./submissionCycles/submissionCycle.model.js";
+import { ManuscriptVersion } from "./manuscriptVersions/manuscriptVersion.model.js";
 
 /**
  * ════════════════════════════════════════════════════════════════
@@ -22,7 +24,7 @@ import { CURRENT_CHECKLIST } from "../../common/constants/checklistQuestions.v1.
 const findSubmissionById = async (submissionId, options = {}) => {
     try {
         let query = Submission.findById(submissionId);
-        
+
         if (options.populate) {
             query = query
                 .populate("author", "firstName lastName email")
@@ -31,11 +33,11 @@ const findSubmissionById = async (submissionId, options = {}) => {
                 .populate("assignedReviewers.reviewer", "firstName lastName email")
                 .populate("assignedTechnicalEditors.technicalEditor", "firstName lastName email");
         }
-        
+
         const submission = await query;
-        
+
         console.log(`🔵 [HELPER] findSubmissionById: ${submission ? "found" : "not found"}`);
-        
+
         return submission;
     } catch (dbError) {
         console.error("❌ [HELPER] findSubmissionById failed:", dbError);
@@ -61,7 +63,7 @@ const validateUserPermission = (submission, userId, action = "view") => {
 const validateCorrespondingAuthor = (submission) => {
     const isMainCorresponding = submission.isCorrespondingAuthor;
     const coAuthorCorresponding = submission.coAuthors?.filter(ca => ca.isCorresponding);
-    
+
     if (!isMainCorresponding && (!coAuthorCorresponding || coAuthorCorresponding.length === 0)) {
         throw new AppError(
             "Please designate a corresponding author (either yourself or one co-author)",
@@ -69,12 +71,96 @@ const validateCorrespondingAuthor = (submission) => {
             "NO_CORRESPONDING_AUTHOR"
         );
     }
-    
+
     if (coAuthorCorresponding && coAuthorCorresponding.length > 1) {
         throw new AppError(
             "Only one corresponding author is allowed",
             STATUS_CODES.BAD_REQUEST,
             "MULTIPLE_CORRESPONDING_AUTHORS"
+        );
+    }
+};
+
+const validateSubmitterRoleType = (user, submitterRoleType) => {
+    const roleMapping = {
+        "Author": "USER",
+        "Editor": "EDITOR",
+        "Technical Editor": "TECHNICAL_EDITOR",
+        "Reviewer": "REVIEWER",
+    };
+
+    const expectedRole = roleMapping[submitterRoleType];
+
+    if (!expectedRole) {
+        throw new AppError(
+            "Invalid submitter role type",
+            STATUS_CODES.BAD_REQUEST,
+            "INVALID_ROLE_TYPE"
+        );
+    }
+
+    if (user.role !== expectedRole) {
+        throw new AppError(
+            `You cannot submit as ${submitterRoleType}. Your account role is ${user.role}.`,
+            STATUS_CODES.FORBIDDEN,
+            "ROLE_MISMATCH",
+            { userRole: user.role, attemptedRoleType: submitterRoleType }
+        );
+    }
+};
+
+const createInitialCycle = async (submissionId) => {
+    try {
+        const cycle = await SubmissionCycle.findOneAndUpdate(
+            { submissionId, cycleNumber: 1 },
+            {
+                $setOnInsert: {
+                    submissionId,
+                    cycleNumber: 1,
+                    status: "IN_PROGRESS",
+                }
+            },
+            {
+                new: true,
+                upsert: true,
+            }
+        );
+
+        console.log(`🔵 [HELPER] Initial cycle ensured for submission ${submissionId}`);
+        return cycle;
+
+    } catch (error) {
+        console.error("❌ [HELPER] Failed to create initial cycle:", error);
+        throw new AppError(
+            "Failed to create submission cycle",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "CYCLE_CREATION_ERROR"
+        );
+    }
+};
+
+const createManuscriptVersion = async (submissionId, cycleId, uploadedBy, uploaderRole, fileRefs) => {
+    try {
+        // Get current version count
+        const versionCount = await ManuscriptVersion.countDocuments({ submissionId });
+
+        const version = await ManuscriptVersion.create({
+            submissionId,
+            cycleNumber: cycleId,
+            fileRefs,
+            uploadedBy,
+            uploaderRole,
+            versionNumber: versionCount + 1,
+        });
+
+        console.log(`🔵 [HELPER] Manuscript version ${versionCount + 1} created`);
+        return version;
+    } catch (error) {
+        console.error("❌ [HELPER] Failed to create manuscript version:", error);
+        throw new AppError(
+            "Failed to create manuscript version",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "VERSION_CREATION_ERROR"
         );
     }
 };
@@ -85,7 +171,7 @@ const sendCoAuthorConsentEmail = async (submission, coAuthor, token) => {
         const name = `${coAuthor.firstName} ${coAuthor.lastName}`;
 
         const consentUrl = `${process.env.FRONTEND_URL}/submissions/${submission._id}/coauthor-consent/${coAuthor._id}?token=${token}`;
-        
+
         const emailHtml = `
             <h2>Co-Author Consent Request</h2>
             <p>Dear ${name},</p>
@@ -116,7 +202,7 @@ const sendReviewerInvitationEmail = async (submission, reviewer, token) => {
         const name = `${reviewer.firstName} ${reviewer.lastName}`;
 
         const invitationUrl = `${process.env.FRONTEND_URL}/submissions/${submission._id}/reviewer-invitation/${reviewer._id}?token=${token}`;
-        
+
         const emailHtml = `
             <h2>Manuscript Review Invitation</h2>
             <p>Dear ${name},</p>
@@ -154,6 +240,19 @@ const createSubmission = async (authorId, payload) => {
             throw new AppError("Author not found", STATUS_CODES.NOT_FOUND, "USER_NOT_FOUND");
         }
 
+        // Validate submitterRoleType matches user's actual role
+        validateSubmitterRoleType(author, payload.submitterRoleType);
+
+        // Only users with role "USER" can submit as "Author"
+        if (payload.submitterRoleType === "Author" && author.role !== "USER") {
+            throw new AppError(
+                "Only users with USER role can submit manuscripts as Author",
+                STATUS_CODES.FORBIDDEN,
+                "INVALID_AUTHOR_ROLE"
+            );
+        }
+
+        // Create submission
         const submission = await Submission.create({
             ...payload,
             author: authorId,
@@ -161,6 +260,33 @@ const createSubmission = async (authorId, payload) => {
         });
 
         console.log("🟢 [SERVICE] Submission created:", submission._id);
+
+        // // Create initial cycle and version if files are uploaded
+        // if (!payload.saveAsDraft && submission.blindManuscriptFile) {
+        //     try {
+        //         // Create cycle
+        //         const cycle = await createInitialCycle(submission._id);
+        //         submission.currentCycleId = cycle._id;
+
+        //         // Create manuscript version
+        //         const fileRefs = [submission.blindManuscriptFile.fileUrl];
+        //         if (submission.coverLetter) fileRefs.push(submission.coverLetter.fileUrl);
+
+        //         await createManuscriptVersion(
+        //             submission._id,
+        //             cycle._id,
+        //             authorId,
+        //             author.role,
+        //             fileRefs
+        //         );
+
+        //         await submission.save();
+        //         console.log("🟢 [SERVICE] Initial cycle and version created");
+        //     } catch (cycleError) {
+        //         console.error("❌ [SERVICE] Failed to create cycle/version:", cycleError);
+        //         // Don't fail the submission, just log the error
+        //     }
+        // }
 
         await submission.populate("author", "firstName lastName email");
 
@@ -298,6 +424,31 @@ const submitManuscript = async (submissionId, userId, payload) => {
 
         submission.updateStatus("SUBMITTED");
 
+        // Create initial cycle and version
+        try {
+            const cycle = await createInitialCycle(submission._id);
+            submission.currentCycleId = cycle._id;
+
+            const fileRefs = [submission.blindManuscriptFile.fileUrl];
+            if (submission.coverLetter) fileRefs.push(submission.coverLetter.fileUrl);
+            if (submission.figures) fileRefs.push(...submission.figures.map(f => f.fileUrl));
+            if (submission.tables) fileRefs.push(...submission.tables.map(f => f.fileUrl));
+            if (submission.supplementaryFiles) fileRefs.push(...submission.supplementaryFiles.map(f => f.fileUrl));
+
+            await createManuscriptVersion(
+                submission._id,
+                cycle._id,
+                userId,
+                "USER",
+                fileRefs
+            );
+
+            console.log("🟢 [SERVICE] Initial cycle and version created for submitted manuscript");
+        } catch (cycleError) {
+            console.error("❌ [SERVICE] Failed to create cycle/version:", cycleError);
+            // Continue with submission even if cycle creation fails
+        }
+
         await submission.save();
 
         const author = await User.findById(userId);
@@ -346,8 +497,18 @@ const listSubmissions = async (userId, userRole, filters = {}) => {
 
         let query = {};
 
+        // Role-based filtering with Author vs Co-author differentiation
         if (userRole === "USER") {
-            query.author = userId;
+            // USER can see:
+            // 1. Submissions where they are the author
+            // 2. Submissions where they are an ACCEPTED co-author
+            query.$or = [
+                { author: userId },
+                { 
+                    "coAuthors.user": userId,
+                    "coAuthors.consentStatus": "ACCEPTED"
+                }
+            ];
         } else if (userRole === "REVIEWER") {
             query["assignedReviewers.reviewer"] = userId;
         } else if (userRole === "TECHNICAL_EDITOR") {
@@ -355,6 +516,7 @@ const listSubmissions = async (userId, userRole, filters = {}) => {
         } else if (userRole === "EDITOR") {
             query.assignedEditor = userId;
         }
+        // ADMIN sees all (no filter)
 
         if (status) query.status = status;
         if (articleType) query.articleType = articleType;
@@ -370,6 +532,7 @@ const listSubmissions = async (userId, userRole, filters = {}) => {
             Submission.find(query)
                 .populate("author", "firstName lastName email")
                 .populate("assignedEditor", "firstName lastName")
+                .populate("currentCycleId")
                 .sort(sort)
                 .skip(skip)
                 .limit(limit),
@@ -392,6 +555,64 @@ const listSubmissions = async (userId, userRole, filters = {}) => {
         if (error instanceof AppError) throw error;
         console.error("❌ [SERVICE] Unexpected error in listSubmissions:", error);
         throw new AppError("Failed to retrieve submissions", STATUS_CODES.INTERNAL_SERVER_ERROR, "LIST_SUBMISSIONS_ERROR", { originalError: error.message });
+    }
+};
+
+// ================================================
+// NEW FUNCTION: Get Submission Timeline (Cycles)
+// ================================================
+
+const getSubmissionTimeline = async (submissionId, userId, userRole) => {
+    try {
+        console.log("🔵 [SERVICE] getSubmissionTimeline started");
+
+        const submission = await findSubmissionById(submissionId);
+
+        if (!submission) {
+            throw new AppError("Submission not found", STATUS_CODES.NOT_FOUND, "SUBMISSION_NOT_FOUND");
+        }
+
+        // Check permissions
+        if (userRole !== "ADMIN" && userRole !== "EDITOR") {
+            if (!submission.canUserView(userId, userRole)) {
+                throw new AppError(
+                    "You don't have permission to view this submission timeline",
+                    STATUS_CODES.FORBIDDEN,
+                    "FORBIDDEN"
+                );
+            }
+        }
+
+        // Get all cycles for this submission
+        const cycles = await SubmissionCycle.findBySubmission(submissionId);
+
+        // Get all manuscript versions
+        const versions = await ManuscriptVersion.findBySubmission(submissionId);
+
+        console.log("✅ [SERVICE] getSubmissionTimeline completed successfully");
+
+        return {
+            message: "Submission timeline retrieved successfully",
+            timeline: {
+                submission: {
+                    id: submission._id,
+                    submissionNumber: submission.submissionNumber,
+                    title: submission.title,
+                    status: submission.status,
+                },
+                cycles,
+                versions,
+            },
+        };
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in getSubmissionTimeline:", error);
+        throw new AppError(
+            "Failed to retrieve submission timeline",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "TIMELINE_ERROR",
+            { originalError: error.message }
+        );
     }
 };
 
@@ -588,11 +809,11 @@ const moveToReview = async (submissionId, userId, userRole) => {
         }
 
         const check = submission.canMoveToReview();
-        
+
         if (!check.canMove) {
             throw new AppError(
-                check.reason, 
-                STATUS_CODES.BAD_REQUEST, 
+                check.reason,
+                STATUS_CODES.BAD_REQUEST,
                 "INSUFFICIENT_REVIEWERS",
                 { current: check.current, required: check.required }
             );
@@ -640,4 +861,5 @@ export default {
     assignEditor,
     processCoAuthorConsent,
     moveToReview,
+    getSubmissionTimeline,
 };

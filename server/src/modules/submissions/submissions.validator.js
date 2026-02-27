@@ -81,6 +81,15 @@ const fileSchema = Joi.object({
 
 export const createSubmissionSchema = {
     body: Joi.object({
+        // Submitter Role Type (Manuscript Submission Login)
+        submitterRoleType: Joi.string()
+            .valid("Author", "Editor", "Technical Editor", "Reviewer")
+            .required()
+            .messages({
+                "any.only": "Submitter role type must be one of: Author, Editor, Technical Editor, Reviewer",
+                "any.required": "Submitter role type is required",
+            }),
+
         // Article Type
         articleType: Joi.string()
             .valid(
@@ -97,6 +106,8 @@ export const createSubmissionSchema = {
                 "any.only": "Please select a valid article type",
                 "any.required": "Article type is required",
             }),
+
+        // ... rest of the fields remain the same ...
 
         // Title
         title: Joi.string()
@@ -238,6 +249,13 @@ export const updateSubmissionSchema = {
     }),
 
     body: Joi.object({
+        submitterRoleType: Joi.string()
+            .valid("Author", "Editor", "Technical Editor", "Reviewer")
+            .optional()
+            .messages({
+                "any.only": "Submitter role type must be one of: Author, Editor, Technical Editor, Reviewer",
+            }),
+
         articleType: Joi.string()
             .valid(
                 "Original Article",
@@ -354,7 +372,7 @@ export const submitManuscriptSchema = {
                 .custom((value, helpers) => {
                     const copeCompliance = helpers.state.ancestors[0].copeCompliance;
                     const result = validateChecklistResponses(value, copeCompliance);
-                    
+
                     if (!result.isValid) {
                         return helpers.error('any.invalid', { message: result.error });
                     }

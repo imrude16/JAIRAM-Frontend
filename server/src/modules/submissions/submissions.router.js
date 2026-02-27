@@ -38,6 +38,7 @@ const {
     assignEditor,
     processCoAuthorConsent,
     moveToReview,
+    getSubmissionTimeline,
 } = submissionController;
 
 const router = Router();
@@ -211,6 +212,28 @@ router.post(
     asyncHandler(processCoAuthorConsent)
 );
 
+/**
+ * GET SUBMISSION TIMELINE (Cycles & Versions)
+ * 
+ * GET /api/submissions/:id/timeline
+ * Headers: Authorization: Bearer <token>
+ * 
+ * Auth: Required
+ * Permission: Author, Co-Authors (accepted), Assigned Editor/Reviewers, Admins
+ * Returns: Complete timeline with all cycles and manuscript versions
+ * 
+ * Use Case:
+ * - Author views submission progress
+ * - Co-author views revision history
+ * - Editor views complete review cycle history
+ * - Reviewer sees previous versions and comments
+ */
+router.get(
+    "/:id/timeline",
+    requireAuth,
+    validateRequest(getSubmissionByIdSchema),
+    asyncHandler(getSubmissionTimeline)
+);
 // ============================================================
 // EDITOR/ADMIN ROUTES
 // ============================================================

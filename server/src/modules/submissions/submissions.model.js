@@ -1,4 +1,5 @@
 import { Schema, model } from "mongoose";
+import crypto from "crypto";
 
 /**
  * ════════════════════════════════════════════════════════════════
@@ -225,10 +226,28 @@ const submissionSchema = new Schema(
         // SUBMISSION STATUS & WORKFLOW
         // ══════════════════════════════════════════════════════════
 
+        // Submitter Role Type (Manuscript Submission Login)
+        submitterRoleType: {
+            type: String,
+            enum: {
+                values: ["Author", "Editor", "Technical Editor", "Reviewer"],
+                message: "{VALUE} is not a valid submitter role type",
+            },
+            required: [true, "Submitter role type is required"],
+            index: true,
+        },
+
         submissionNumber: {
             type: String,
             unique: true,
             sparse: true,
+            index: true,
+        },
+
+        // Current active cycle reference
+        currentCycleId: {
+            type: Schema.Types.ObjectId,
+            ref: "SubmissionCycle",
             index: true,
         },
 
@@ -538,33 +557,48 @@ submissionSchema.index({ title: "text", abstract: "text", keywords: "text" });
 
 submissionSchema.pre("save", async function (next) {
     try {
-        // 🔒 HARD LOCK AFTER SUBMISSION (except status transition itself)
+        // 🔒 HARD LOCK AFTER SUBMISSION (production-grade)
         if (!this.isNew && this.status !== "DRAFT") {
 
             const modifiedFields = this.modifiedPaths();
-
             const isStatusChange = this.isModified("status");
 
-            const allowedFields = isStatusChange
-                ? [
-                    "status",
-                    "acceptedAt",
-                    "rejectedAt",
-                    "submittedAt",
-                    "lastModifiedAt"
-                ]
-                : [
-                    "paymentStatus",
-                    "internalNotes",
-                    "assignedEditor",
-                    "assignedEditorDate",
-                    "assignedReviewers",
-                    "assignedTechnicalEditors",
-                    "lastModifiedAt"
-                ];
+            // 🟢 Allowed during DRAFT → SUBMITTED transition
+            const submissionTransitionFields = [
+                "checklist",
+                "conflictOfInterest",
+                "copyrightAgreement",
+                "pdfPreviewConfirmed",
+                "suggestedReviewers",
+                "status",
+                "submittedAt",
+                "currentCycleId",   // system-generated during submission
+                "lastModifiedAt",
+                "updatedAt"
+            ];
 
-            const illegalModification = modifiedFields.find(
-                field => !allowedFields.some(allowed => field.startsWith(allowed))
+            // 🟡 Allowed AFTER submission (editorial stage only)
+            const postSubmissionAllowedFields = [
+                "paymentStatus",
+                "internalNotes",
+                "assignedEditor",
+                "assignedEditorDate",
+                "assignedReviewers",
+                "assignedTechnicalEditors",
+                "acceptedAt",
+                "rejectedAt",
+                "status",           // for valid status transitions
+                "lastModifiedAt",
+                "updatedAt",
+                "currentCycleId"    // required for revision cycles
+            ];
+
+            const allowedFields = isStatusChange
+                ? submissionTransitionFields
+                : postSubmissionAllowedFields;
+
+            const illegalModification = modifiedFields.find(field =>
+                !allowedFields.some(allowed => field.startsWith(allowed))
             );
 
             if (illegalModification) {
@@ -603,8 +637,17 @@ submissionSchema.pre("save", async function (next) {
             throw new Error("Only one co-author can be corresponding author");
         }
 
+        // Validate submitterRoleType matches author's actual role
+        if (this.isNew && this.submitterRoleType) {
+            // This validation happens in service layer, not here
+            // Just ensure field is present
+            if (!["Author", "Editor", "Technical Editor", "Reviewer"].includes(this.submitterRoleType)) {
+                throw new Error("Invalid submitter role type");
+            }
+        }
+
     } catch (error) {
-        next(error);
+        throw new Error(error);
     }
 });
 
@@ -635,7 +678,6 @@ submissionSchema.methods.canEdit = function (userId) {
 };
 
 submissionSchema.methods.generateCoAuthorConsentToken = function (coAuthorIndex) {
-    const crypto = require('crypto');
     const token = crypto.randomBytes(32).toString('hex');
 
     this.coAuthors[coAuthorIndex].consentToken = token;
@@ -663,7 +705,6 @@ submissionSchema.methods.verifyCoAuthorConsentToken = function (coAuthorIndex, t
 };
 
 submissionSchema.methods.generateReviewerInvitationToken = function (reviewerIndex) {
-    const crypto = require('crypto');
     const token = crypto.randomBytes(32).toString('hex');
 
     this.suggestedReviewers[reviewerIndex].invitationToken = token;
@@ -761,6 +802,35 @@ submissionSchema.methods.canMoveToReview = function () {
     return { canMove: true, approvedReviewers };
 };
 
+// Permission checks for viewing/editing based on role and relationship to submission
+submissionSchema.methods.isUserAuthor = function (userId) {
+    return this.author.toString() === userId.toString();
+};
+
+submissionSchema.methods.isUserCoAuthor = function (userId) {
+    return this.coAuthors.some(ca =>
+        ca.user &&
+        ca.user.toString() === userId.toString() &&
+        ca.consentStatus === "ACCEPTED"
+    );
+};
+
+submissionSchema.methods.canUserView = function (userId, userRole) {
+    // Admin and Editor can view all
+    if (userRole === "ADMIN" || userRole === "EDITOR") return true;
+
+    // Author can view
+    if (this.isUserAuthor(userId)) return true;
+
+    // Accepted co-authors can view
+    if (this.isUserCoAuthor(userId)) return true;
+
+    // Assigned reviewers/technical editors can view
+    if (this.assignedReviewers.some(r => r.reviewer.toString() === userId)) return true;
+    if (this.assignedTechnicalEditors.some(r => r.technicalEditor.toString() === userId)) return true;
+
+    return false;
+};
 // ══════════════════════════════════════════════════════════════════
 // STATIC METHODS
 // ══════════════════════════════════════════════════════════════════

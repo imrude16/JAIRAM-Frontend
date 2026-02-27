@@ -3,7 +3,7 @@ import { STATUS_CODES } from "../../common/constants/statusCodes.js";
 import { User } from "./users.model.js";
 import { generateToken } from "../../common/utils/jwtToken.js";
 import { sendEmail } from "../../infrastructure/email/email.service.js";
-import { otpTemplate } from "../../infrastructure/email/email.template.js";
+import { otpTemplate, passwordResetTemplate } from "../../infrastructure/email/email.template.js";
 
 // ================================================
 // PRIVATE HELPER FUNCTIONS
@@ -452,6 +452,134 @@ const checkEmailAvailability = async (email) => {
     }
 };
 
+/* --> forgotPassword flow:
+1. Find user by email
+2. Check if exists
+3. Check if verified
+4. Generate OTP
+5. Save OTP
+6. Send email
+*/
+const forgotPassword = async (email) => {
+    try {
+        console.log("🔵 [SERVICE] forgotPassword started"); // debugger
+
+        const user = await findUserByEmail(email);
+
+        if (!user) {
+            throw new AppError("No account found with this email address", STATUS_CODES.NOT_FOUND, "USER_NOT_FOUND");
+        }
+
+        if (!user.isEmailVerified) {
+            throw new AppError("Please verify your email before resetting password", STATUS_CODES.FORBIDDEN, "EMAIL_NOT_VERIFIED");
+        }
+
+        // Generate OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Save OTP to user
+        user.passwordResetOTP = otp;
+        user.passwordResetOTPExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        
+        try {
+            await user.save();
+            console.log("🔵 [SERVICE] Password reset OTP saved"); // debugger
+        } catch (dbError) {
+            console.error("❌ [SERVICE] Failed to save password reset OTP:", dbError);
+            throw new AppError("Failed to process password reset request", STATUS_CODES.INTERNAL_SERVER_ERROR, "OTP_SAVE_ERROR");
+        }
+
+        // Send email
+        try {
+            await sendEmail({
+                to: user.email,
+                subject: "JAIRAM - Password Reset OTP",
+                html: passwordResetTemplate(user.firstName, otp),
+            });
+            console.log("🔵 [SERVICE] Password reset email sent"); // debugger
+        } catch (emailError) {
+            console.error("❌ [SERVICE] Failed to send password reset email:", emailError);
+            // Don't throw error - OTP is saved, user can try again
+        }
+
+        console.log("✅ [SERVICE] forgotPassword completed successfully"); // debugger
+
+        return {
+            message: "Password reset OTP sent to your email. Please check your inbox.",
+            email: user.email,
+        };
+
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in forgotPassword:", error);
+        throw new AppError("An unexpected error occurred during password reset request", STATUS_CODES.INTERNAL_SERVER_ERROR, "FORGOT_PASSWORD_ERROR", { originalError: error.message });
+    }
+};
+
+/* --> resetPassword flow:
+1. Find user by email (with password reset OTP)
+2. Check if exists
+3. Verify OTP and expiry
+4. Update password
+5. Clear OTP fields
+6. Generate new JWT token
+*/
+const resetPassword = async (email, otp, newPassword) => {
+    try {
+        console.log("🔵 [SERVICE] resetPassword started"); // debugger
+
+        // Find user with password reset OTP fields
+        const user = await User.findOne({ email })
+            .select("+passwordResetOTP +passwordResetOTPExpires +password");
+
+        if (!user) {
+            throw new AppError("User not found", STATUS_CODES.NOT_FOUND, "USER_NOT_FOUND");
+        }
+
+        // Verify OTP
+        if (!user.passwordResetOTP || !user.passwordResetOTPExpires) {
+            throw new AppError("No password reset request found. Please request a new OTP.", STATUS_CODES.BAD_REQUEST, "NO_RESET_REQUEST");
+        }
+
+        if (user.passwordResetOTP !== otp) {
+            throw new AppError("Invalid OTP", STATUS_CODES.BAD_REQUEST, "INVALID_OTP");
+        }
+
+        if (user.passwordResetOTPExpires < Date.now()) {
+            throw new AppError("OTP has expired. Please request a new one.", STATUS_CODES.BAD_REQUEST, "EXPIRED_OTP");
+        }
+
+        // Update password
+        user.password = newPassword;
+        user.passwordResetOTP = undefined;
+        user.passwordResetOTPExpires = undefined;
+
+        try {
+            await user.save();
+            console.log("🔵 [SERVICE] Password updated successfully"); // debugger
+        } catch (dbError) {
+            console.error("❌ [SERVICE] Failed to update password:", dbError);
+            throw new AppError("Failed to reset password", STATUS_CODES.INTERNAL_SERVER_ERROR, "PASSWORD_UPDATE_ERROR");
+        }
+
+        // Generate new token
+        const token = createAuthToken(user);
+
+        console.log("✅ [SERVICE] resetPassword completed successfully"); // debugger
+
+        return {
+            message: "Password reset successfully. You can now login with your new password.",
+            token,
+            user: formatUserResponse(user),
+        };
+
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in resetPassword:", error);
+        throw new AppError("An unexpected error occurred during password reset", STATUS_CODES.INTERNAL_SERVER_ERROR, "RESET_PASSWORD_ERROR", { originalError: error.message });
+    }
+};
+
 export default {
     registerUser,
     verifyOTP,
@@ -461,4 +589,6 @@ export default {
     updateUserProfile,
     changePassword,
     checkEmailAvailability,
+    forgotPassword,
+    resetPassword,
 };

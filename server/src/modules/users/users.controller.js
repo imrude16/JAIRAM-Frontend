@@ -183,8 +183,43 @@ const checkEmailAvailability = async (req, res) => {
     );
 };
 
+const forgotPassword = async (req, res) => {
+    const { email } = req.body;
 
-export default {   // check here - a inconsistency in export style 
+    // Call service layer
+    const result = await userService.forgotPassword(email);
+
+    // Send success response
+    sendSuccess(
+        res,
+        result.message,
+        { email: result.email },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+
+const resetPassword = async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+
+    // Call service layer
+    const result = await userService.resetPassword(email, otp, newPassword);
+
+    // Send success response with token
+    sendSuccess(
+        res,
+        result.message,
+        {
+            token: result.token,
+            user: result.user,
+        },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+export default {  
     registerUser,
     verifyOTP,
     resendOTP,
@@ -194,4 +229,6 @@ export default {   // check here - a inconsistency in export style
     updateUserProfile,
     changePassword,
     checkEmailAvailability,
+    forgotPassword,
+    resetPassword,
 };

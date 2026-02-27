@@ -167,6 +167,16 @@ const userSchema = new Schema(
             select: false,
         },
 
+        // ========== PASSWORD RESET ==========
+        passwordResetOTP: {
+            type: String,
+            select: false,
+        },
+        passwordResetOTPExpires: {
+            type: Date,
+            select: false,
+        },
+
         // ========== TERMS & CONDITIONS ACCEPTANCE ==========
         termsAccepted: {
             type: Boolean,
@@ -197,6 +207,8 @@ const userSchema = new Schema(
                 delete ret.password;
                 delete ret.emailVerificationOTP;
                 delete ret.emailVerificationOTPExpires;
+                delete ret.passwordResetOTP;          
+                delete ret.passwordResetOTPExpires;
                 delete ret.__v;
                 return ret;
             },

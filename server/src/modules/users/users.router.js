@@ -15,6 +15,8 @@ import {
     updateUserSchema,
     changePasswordSchema,
     checkEmailSchema,
+    forgotPasswordSchema,
+    resetPasswordSchema,
 } from "./users.validator.js";
 
 
@@ -28,6 +30,8 @@ const {
     updateUserProfile,
     changePassword,
     checkEmailAvailability,
+    forgotPassword,
+    resetPassword,
 } = userController;
 
 const router = Router();
@@ -140,6 +144,36 @@ router.post(
     asyncHandler(loginUser)
 );
 
+/**
+ * FORGOT PASSWORD (Step 1 of 2 - Sends OTP)
+ *
+ * POST /api/users/forgot-password
+ * Body: { email }
+ *
+ * Auth    : None
+ * Returns : Success message + OTP sent to email
+ * Next    : Call /reset-password with OTP
+ */
+router.post(
+    "/forgot-password",
+    validateRequest(forgotPasswordSchema),
+    asyncHandler(forgotPassword)
+);
+
+/**
+ * RESET PASSWORD (Step 2 of 2 - Verifies OTP & Resets)
+ *
+ * POST /api/users/reset-password
+ * Body: { email, otp, newPassword, confirmNewPassword }
+ *
+ * Auth    : None
+ * Returns : JWT token + user data on success
+ */
+router.post(
+    "/reset-password",
+    validateRequest(resetPasswordSchema),
+    asyncHandler(resetPassword)
+);
 
 // ============================================================
 // PROTECTED ROUTES (Authentication Required)
@@ -204,12 +238,12 @@ router.get(
  * PATCH partially updates (only send fields you want to change)
  * Since users update one field at a time, PATCH is correct.
  */
-router.patch(
-    "/profile",
-    requireAuth,
-    validateRequest(updateUserSchema),
-    asyncHandler(updateUserProfile)
-);
+// router.patch(
+//     "/profile",
+//     requireAuth,
+//     validateRequest(updateUserSchema),
+//     asyncHandler(updateUserProfile)
+// );
 
 /**
  * CHANGE PASSWORD
@@ -285,4 +319,4 @@ router.patch(
     asyncHandler(updateUserProfile)
 );
 
-export default router;
+export default router;      

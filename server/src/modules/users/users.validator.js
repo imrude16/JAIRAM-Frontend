@@ -511,11 +511,17 @@ export const forgotPasswordSchema = {
 
 export const resetPasswordSchema = {
     body: Joi.object({
-        token: Joi.string()
+        email: emailField,  // ← ADD EMAIL
+
+        otp: Joi.string()   // ← CHANGE token to otp
+            .length(6)
+            .pattern(/^\d{6}$/)
             .required()
             .messages({
-                "any.required": "Reset token is required",
-                "string.empty": "Reset token cannot be empty",
+                "string.length": "OTP must be exactly 6 digits",
+                "string.pattern.base": "OTP must contain only numbers",
+                "any.required": "OTP is required",
+                "string.empty": "OTP cannot be empty",
             }),
 
         newPassword: passwordField,

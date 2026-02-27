@@ -427,7 +427,19 @@ The error handler automatically detects and handles both types!
   password: String (required, hashed)
   
   // Professional Information
-  profession: Enum ["DOCTOR", "RESEARCHER", "STUDENT", "OTHER"]
+  profession: Enum [
+                "Physician (MD)",
+                "Physician (DO)",
+                "Physician Resident / Fellow",
+                "Student, Medical School",
+                "Administrator",
+                "PA",
+                "Nurse Practitioner",
+                "Nursing Advance Practice",
+                "Nursing, RN",
+                "Nursing, LPN",
+                "Allied Health Professional",
+                "Other"]
   primarySpecialty: String
   institution: String
   department: String
@@ -444,7 +456,7 @@ The error handler automatically detects and handles both types!
   }
   
   // Role & Status
-  role: Enum ["USER", "ADMIN", "EDITOR", "TECHNICAL_REVIEWER", "REVIEWER"]
+  role: Enum ["USER", "ADMIN", "EDITOR", "TECHNICAL_EDITOR", "REVIEWER"]
   status: Enum ["ACTIVE", "INACTIVE", "SUSPENDED"]
   
   // Email Verification
@@ -538,19 +550,19 @@ Now that user authentication is complete, here's what to build next:
 - Receive consent emails
 - Accept/reject collaboration
 - Download manuscripts
-- Submit revisions
 
 ### 3. Editor Module
 - Initial screening
-- Assign to technical reviewer
+- Assign to technical editor
 - Assign to reviewers
 - Consolidate feedback
 - Accept/reject manuscripts
 
-### 4. Technical Reviewer Module
+### 4. Technical Editor Module
 - Review formatting
 - Check compliance
 - Submit remarks
+- Accept/reject manuscripts
 
 ### 5. Reviewer Module
 - Review academic quality

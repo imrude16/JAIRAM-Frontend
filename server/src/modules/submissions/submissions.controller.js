@@ -195,6 +195,24 @@ const moveToReview = async (req, res) => {
     );
 };
 
+const getSubmissionTimeline = async (req, res) => {
+    const { id } = req.params;
+
+    const result = await submissionService.getSubmissionTimeline(
+        id,
+        req.user.id,
+        req.user.role
+    );
+
+    sendSuccess(
+        res,
+        result.message,
+        { timeline: result.timeline },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
 export default {
     createSubmission,
     getSubmissionById,
@@ -206,4 +224,5 @@ export default {
     assignEditor,
     processCoAuthorConsent,
     moveToReview,
+    getSubmissionTimeline,
 };
