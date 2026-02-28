@@ -2,11 +2,16 @@ import { Schema, model } from "mongoose";
 
 /**
  * ════════════════════════════════════════════════════════════════
- * SUBMISSION CYCLE SCHEMA
+ * SUBMISSION CYCLE SCHEMA - UPDATED WITH DECISION TRACKING
  * ════════════════════════════════════════════════════════════════
  * 
  * Tracks each revision cycle of a manuscript submission
  * Stores editor decisions, technical editor reviews, and reviewer feedback
+ * 
+ * CHANGES:
+ * - Enhanced editorDecision with decisionNumber and decisionStage
+ * - Added technicalEditorReview for Technical Editor decisions
+ * - Added reviewerFeedback array for multiple reviewer comments
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -15,7 +20,7 @@ const submissionCycleSchema = new Schema(
         // ══════════════════════════════════════════════════════════
         // CORE REFERENCES
         // ══════════════════════════════════════════════════════════
-        
+
         submissionId: {
             type: Schema.Types.ObjectId,
             ref: "Submission",
@@ -33,7 +38,7 @@ const submissionCycleSchema = new Schema(
         // ══════════════════════════════════════════════════════════
         // MANUSCRIPT VERSION REFERENCE
         // ══════════════════════════════════════════════════════════
-        
+
         manuscriptVersionId: {
             type: Schema.Types.ObjectId,
             ref: "ManuscriptVersion",
@@ -43,11 +48,10 @@ const submissionCycleSchema = new Schema(
         // ══════════════════════════════════════════════════════════
         // ASSIGNED PERSONNEL
         // ══════════════════════════════════════════════════════════
-        
+
         technicalEditorId: {
             type: Schema.Types.ObjectId,
             ref: "User",
-            index: true,
         },
 
         reviewersId: [{
@@ -56,24 +60,8 @@ const submissionCycleSchema = new Schema(
         }],
 
         // ══════════════════════════════════════════════════════════
-        // EDITOR REMARKS & DECISION
+        // EDITOR DECISION (ENHANCED)
         // ══════════════════════════════════════════════════════════
-        
-        editorRemarks: {
-            comment: {
-                type: String,
-                trim: true,
-                maxlength: [5000, "Comment cannot exceed 5000 characters"],
-            },
-            attachmentRefs: [{
-                type: String,
-                trim: true,
-            }],
-            remarkedAt: {
-                type: Date,
-                default: Date.now,
-            },
-        },
 
         editorDecision: {
             type: {
@@ -86,15 +74,79 @@ const submissionCycleSchema = new Schema(
             reason: {
                 type: String,
                 trim: true,
-                maxlength: [2000, "Reason cannot exceed 2000 characters"],
+                maxlength: 2000,
             },
             decidedAt: Date,
+
+            // NEW: Track which decision number this is (1st, 2nd, 3rd, 4th)
+            decisionNumber: {
+                type: Number,
+                min: 1,
+                max: 4,  // Editor gets max 4 chances
+            },
+
+            // NEW: Which stage was this decision made at?
+            decisionStage: {
+                type: String,
+                enum: [
+                    "INITIAL_SCREENING",
+                    "POST_TECH_EDITOR",
+                    "POST_REVIEWER",
+                    "FINAL_DECISION",
+                ],
+            },
         },
+
+        // ══════════════════════════════════════════════════════════
+        // TECHNICAL EDITOR REVIEW (NEW)
+        // ══════════════════════════════════════════════════════════
+
+        technicalEditorReview: {
+            reviewedBy: {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+            },
+            decision: {
+                type: String,
+                enum: ["ACCEPT", "REJECT"],
+            },
+            remarks: {
+                type: String,
+                trim: true,
+                maxlength: 5000,
+            },
+            attachmentRefs: [{
+                type: String,
+                trim: true,
+            }],
+            reviewedAt: Date,
+        },
+
+        // ══════════════════════════════════════════════════════════
+        // REVIEWER FEEDBACK (NEW)
+        // ══════════════════════════════════════════════════════════
+
+        reviewerFeedback: [{
+            reviewer: {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+            },
+            remarks: {
+                type: String,
+                trim: true,
+                maxlength: 5000,
+            },
+            attachmentRefs: [{
+                type: String,
+                trim: true,
+            }],
+            reviewedAt: Date,
+        }],
 
         // ══════════════════════════════════════════════════════════
         // STATUS TRACKING
         // ══════════════════════════════════════════════════════════
-        
+
         status: {
             type: String,
             enum: {
@@ -130,6 +182,8 @@ submissionCycleSchema.statics.findBySubmission = async function (submissionId) {
     return this.find({ submissionId })
         .populate("technicalEditorId", "firstName lastName email")
         .populate("reviewersId", "firstName lastName email")
+        .populate("technicalEditorReview.reviewedBy", "firstName lastName email")
+        .populate("reviewerFeedback.reviewer", "firstName lastName email")
         .populate("manuscriptVersionId")
         .sort({ cycleNumber: 1 });
 };
@@ -139,6 +193,8 @@ submissionCycleSchema.statics.getCurrentCycle = async function (submissionId) {
         .sort({ cycleNumber: -1 })
         .populate("technicalEditorId", "firstName lastName email")
         .populate("reviewersId", "firstName lastName email")
+        .populate("technicalEditorReview.reviewedBy", "firstName lastName email")
+        .populate("reviewerFeedback.reviewer", "firstName lastName email")
         .populate("manuscriptVersionId");
 };
 

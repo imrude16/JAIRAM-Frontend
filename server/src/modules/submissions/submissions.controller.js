@@ -4,11 +4,12 @@ import { STATUS_CODES } from "../../common/constants/statusCodes.js";
 
 /**
  * ════════════════════════════════════════════════════════════════
- * SUBMISSION CONTROLLER LAYER - COMPLETE VERSION
+ * SUBMISSION CONTROLLER LAYER - COMPLETE VERSION WITH REVISIONS
  * ════════════════════════════════════════════════════════════════
  * 
  * Follows same pattern as users.controller.js
  * Handles HTTP requests and responses
+ * + NEW: Controllers for revisions and decisions
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -213,6 +214,103 @@ const getSubmissionTimeline = async (req, res) => {
     );
 };
 
+// ════════════════════════════════════════════════════════════════
+// NEW CONTROLLERS FOR REVISIONS AND DECISIONS
+// ════════════════════════════════════════════════════════════════
+
+const submitRevision = async (req, res) => {
+    const result = await submissionService.submitRevision(req.user.id, req.body);
+
+    sendSuccess(
+        res,
+        result.message,
+        { revision: result.revision },
+        null,
+        STATUS_CODES.CREATED
+    );
+};
+
+const makeEditorDecision = async (req, res) => {
+    const { id } = req.params;
+    const { decision, decisionStage, remarks, attachments } = req.body;
+
+    const result = await submissionService.makeEditorDecision(
+        id,
+        req.user.id,
+        decision,
+        decisionStage,
+        remarks,
+        attachments
+    );
+
+    sendSuccess(
+        res,
+        result.message,
+        { 
+            submission: result.submission,
+            decisionsRemaining: result.decisionsRemaining 
+        },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+const makeTechnicalEditorDecision = async (req, res) => {
+    const { id } = req.params;
+    const { decision, remarks, attachments } = req.body;
+
+    const result = await submissionService.makeTechnicalEditorDecision(
+        id,
+        req.user.id,
+        decision,
+        remarks,
+        attachments
+    );
+
+    sendSuccess(
+        res,
+        result.message,
+        { 
+            submission: result.submission,
+            note: result.note 
+        },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+const checkCoAuthorConsent = async (req, res) => {
+    const { id } = req.params;
+
+    const result = await submissionService.checkCoAuthorConsentStatus(id);
+
+    sendSuccess(
+        res,
+        result.message,
+        { consentStatus: result.consentStatus },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+const checkReviewerMajority = async (req, res) => {
+    const { id } = req.params;
+
+    const result = await submissionService.checkReviewerMajorityStatus(id);
+
+    sendSuccess(
+        res,
+        result.message,
+        { majorityStatus: result.majorityStatus },
+        null,
+        STATUS_CODES.OK
+    );
+};
+
+// ================================================
+// EXPORTS
+// ================================================
+
 export default {
     createSubmission,
     getSubmissionById,
@@ -225,4 +323,10 @@ export default {
     processCoAuthorConsent,
     moveToReview,
     getSubmissionTimeline,
+    // NEW EXPORTS:
+    submitRevision,
+    makeEditorDecision,
+    makeTechnicalEditorDecision,
+    checkCoAuthorConsent,
+    checkReviewerMajority,
 };

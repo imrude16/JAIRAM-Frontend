@@ -1,5 +1,6 @@
 import { Schema, model } from "mongoose";
 import crypto from "crypto";
+import mongoose from "mongoose";
 
 /**
  * ════════════════════════════════════════════════════════════════
@@ -13,6 +14,8 @@ import crypto from "crypto";
  * - Updated status flow (DRAFT → SUBMITTED → UNDER_REVIEW → ...)
  * - Added paymentStatus (changed by editor)
  * - Suggested reviewers: same pattern as co-authors
+ * - Revision tracking fields added
+ * - Suggested reviewer responses tracking
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -236,6 +239,55 @@ const submissionSchema = new Schema(
             required: [true, "Submitter role type is required"],
             index: true,
         },
+         
+        // ══════════════════════════════════════════════════════════
+        // REVISION TRACKING FIELDS (NEW)
+        // ══════════════════════════════════════════════════════════
+        
+        // Link to original submission (for revisions)
+        originalSubmissionId: {
+            type: Schema.Types.ObjectId,
+            ref: "Submission",
+            index: true,
+        },
+
+        // Is this a revision or a new submission?
+        isRevision: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+
+        // Which revision stage is this? (for tracking workflow)
+        revisionStage: {
+            type: String,
+            enum: {
+                values: [
+                    "INITIAL_SUBMISSION",       // Author's first submission
+                    "EDITOR_TO_TECH_EDITOR",    // Editor → Technical Editor
+                    "TECH_EDITOR_TO_EDITOR",    // Technical Editor → Editor
+                    "EDITOR_TO_REVIEWER",       // Editor → Reviewer
+                    "REVIEWER_TO_EDITOR",       // Reviewer → Editor
+                    "EDITOR_TO_AUTHOR",         // Editor → Author (revision request)
+                    "AUTHOR_REVISION",          // Author resubmitting after revision request
+                ],
+                message: "{VALUE} is not a valid revision stage",
+            },
+            default: "INITIAL_SUBMISSION",
+        },
+
+        // Track suggested reviewer responses (this is submission-level, not cycle-level)
+        suggestedReviewerResponses: {
+            totalSuggested: { type: Number, default: 0 },
+            accepted: { type: Number, default: 0 },
+            declined: { type: Number, default: 0 },
+            pending: { type: Number, default: 0 },
+            majorityMet: { type: Boolean, default: false },
+        },
+
+        // ══════════════════════════════════════════════════════════
+        // SUBMISSION METADATA
+        // ══════════════════════════════════════════════════════════
 
         submissionNumber: {
             type: String,
@@ -347,7 +399,7 @@ const submissionSchema = new Schema(
                     required: true,
                 },
             }],
-            copeCompliance: { type: Boolean },   //EDIT
+            copeCompliance: { type: Boolean },
             completedAt: Date,
         },
 
@@ -431,12 +483,12 @@ const submissionSchema = new Schema(
         // ══════════════════════════════════════════════════════════
 
         conflictOfInterest: {
-            hasConflict: { type: Boolean },      //EDIT
+            hasConflict: { type: Boolean },
             details: { type: String, trim: true, maxlength: 2000 },
         },
 
         copyrightAgreement: {
-            accepted: { type: Boolean },   //EDIT
+            accepted: { type: Boolean },
             acceptedAt: Date,
             ipAddress: String,
         },
@@ -570,9 +622,10 @@ submissionSchema.pre("save", async function (next) {
                 "copyrightAgreement",
                 "pdfPreviewConfirmed",
                 "suggestedReviewers",
+                "suggestedReviewerResponses",  // NEW
                 "status",
                 "submittedAt",
-                "currentCycleId",   // system-generated during submission
+                "currentCycleId",
                 "lastModifiedAt",
                 "updatedAt"
             ];
@@ -587,10 +640,11 @@ submissionSchema.pre("save", async function (next) {
                 "assignedTechnicalEditors",
                 "acceptedAt",
                 "rejectedAt",
-                "status",           // for valid status transitions
+                "status",
                 "lastModifiedAt",
                 "updatedAt",
-                "currentCycleId"    // required for revision cycles
+                "currentCycleId",
+                "revisionStage",  // NEW
             ];
 
             const allowedFields = isStatusChange
@@ -637,10 +691,13 @@ submissionSchema.pre("save", async function (next) {
             throw new Error("Only one co-author can be corresponding author");
         }
 
-        // Validate submitterRoleType matches author's actual role
+        // NEW: Validate isRevision requires originalSubmissionId
+        if (this.isRevision && !this.originalSubmissionId) {
+            throw new Error("originalSubmissionId is required for revisions");
+        }
+
+        // Validate submitterRoleType
         if (this.isNew && this.submitterRoleType) {
-            // This validation happens in service layer, not here
-            // Just ensure field is present
             if (!["Author", "Editor", "Technical Editor", "Reviewer"].includes(this.submitterRoleType)) {
                 throw new Error("Invalid submitter role type");
             }
@@ -831,6 +888,142 @@ submissionSchema.methods.canUserView = function (userId, userRole) {
 
     return false;
 };
+
+// ══════════════════════════════════════════════════════════════════
+// NEW METHODS FOR DECISION TRACKING (Query-based from SubmissionCycle)
+// ══════════════════════════════════════════════════════════════════
+
+// Check Editor decision count across ALL cycles
+submissionSchema.methods.getEditorDecisionCount = async function () {
+    const SubmissionCycle = mongoose.model("SubmissionCycle");
+    
+    const cycles = await SubmissionCycle.find({
+        submissionId: this._id,
+        "editorDecision.type": { $in: ["ACCEPT", "REJECT"] }
+    });
+    
+    return {
+        totalDecisions: cycles.length,
+        decisionsRemaining: 4 - cycles.length,
+        canDecide: cycles.length < 4,
+    };
+};
+
+// Check if Technical Editor has decided
+submissionSchema.methods.hasTechnicalEditorDecided = async function () {
+    const SubmissionCycle = mongoose.model("SubmissionCycle");
+    
+    const cycle = await SubmissionCycle.findOne({
+        submissionId: this._id,
+        "technicalEditorReview.decision": { $exists: true }
+    });
+    
+    return {
+        hasDecided: !!cycle,
+        decision: cycle?.technicalEditorReview?.decision,
+        cycleNumber: cycle?.cycleNumber,
+    };
+};
+
+// Get complete decision history
+submissionSchema.methods.getDecisionHistory = async function () {
+    const SubmissionCycle = mongoose.model("SubmissionCycle");
+    
+    const cycles = await SubmissionCycle.find({ submissionId: this._id })
+        .sort({ cycleNumber: 1 })
+        .populate("technicalEditorReview.reviewedBy", "firstName lastName")
+        .populate("reviewerFeedback.reviewer", "firstName lastName");
+    
+    return cycles.map(cycle => ({
+        cycleNumber: cycle.cycleNumber,
+        editorDecision: cycle.editorDecision,
+        technicalEditorReview: cycle.technicalEditorReview,
+        reviewerFeedback: cycle.reviewerFeedback,
+        status: cycle.status,
+    }));
+};
+
+// Check co-author consent status
+submissionSchema.methods.checkCoAuthorConsent = function () {
+    if (!this.coAuthors || this.coAuthors.length === 0) {
+        return { allAccepted: true, canProceed: true, message: "No co-authors to approve" };
+    }
+    
+    const rejected = this.coAuthors.filter(ca => ca.consentStatus === "REJECTED");
+    const pending = this.coAuthors.filter(ca => ca.consentStatus === "PENDING");
+    const accepted = this.coAuthors.filter(ca => ca.consentStatus === "ACCEPTED");
+    
+    if (rejected.length > 0) {
+        return {
+            allAccepted: false,
+            canProceed: false,
+            message: `${rejected.length} co-author(s) rejected consent. Submission cannot proceed.`,
+            rejected: rejected.map(ca => ({ name: `${ca.firstName} ${ca.lastName}`, email: ca.email })),
+        };
+    }
+    
+    if (pending.length > 0) {
+        return {
+            allAccepted: false,
+            canProceed: false,
+            message: `Waiting for ${pending.length} co-author(s) to respond.`,
+            pending: pending.map(ca => ({ name: `${ca.firstName} ${ca.lastName}`, email: ca.email })),
+        };
+    }
+    
+    return {
+        allAccepted: true,
+        canProceed: true,
+        message: "All co-authors have accepted consent",
+    };
+};
+
+// Check suggested reviewer majority
+submissionSchema.methods.checkReviewerMajority = function () {
+    const total = this.suggestedReviewerResponses.totalSuggested;
+    const accepted = this.suggestedReviewerResponses.accepted;
+    const declined = this.suggestedReviewerResponses.declined;
+    const pending = this.suggestedReviewerResponses.pending;
+    
+    if (total === 0) {
+        return {
+            majorityMet: false,
+            message: "No reviewers suggested",
+        };
+    }
+    
+    // Majority rule: More than 50% must accept
+    const requiredAcceptances = Math.ceil(total / 2);
+    
+    if (accepted >= requiredAcceptances) {
+        return {
+            majorityMet: true,
+            message: `Majority achieved: ${accepted}/${total} reviewers accepted`,
+            accepted,
+            total,
+        };
+    }
+    
+    // Check if majority is still possible
+    const maxPossibleAcceptances = accepted + pending;
+    
+    if (maxPossibleAcceptances < requiredAcceptances) {
+        return {
+            majorityMet: false,
+            cannotReachMajority: true,
+            message: `Cannot reach majority: Only ${maxPossibleAcceptances}/${total} can accept, need ${requiredAcceptances}`,
+        };
+    }
+    
+    return {
+        majorityMet: false,
+        message: `Waiting for more responses: ${accepted}/${total} accepted, need ${requiredAcceptances}`,
+        accepted,
+        total,
+        pending,
+    };
+};
+
 // ══════════════════════════════════════════════════════════════════
 // STATIC METHODS
 // ══════════════════════════════════════════════════════════════════

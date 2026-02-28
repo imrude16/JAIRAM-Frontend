@@ -9,11 +9,14 @@ import { ManuscriptVersion } from "./manuscriptVersions/manuscriptVersion.model.
 
 /**
  * ════════════════════════════════════════════════════════════════
- * SUBMISSION SERVICE LAYER - COMPLETE VERSION
+ * SUBMISSION SERVICE LAYER - COMPLETE VERSION WITH REVISIONS
  * ════════════════════════════════════════════════════════════════
  * 
  * Follows same pattern as users.service.js
  * Handles all business logic for submissions
+ * + NEW: Revision submission logic
+ * + NEW: Editor/Tech Editor decision tracking
+ * + NEW: Co-author consent and reviewer majority checks
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -81,7 +84,8 @@ const validateCorrespondingAuthor = (submission) => {
     }
 };
 
-const validateSubmitterRoleType = (user, submitterRoleType) => {
+// NEW: Updated validation function with isRevision parameter
+const validateSubmitterRoleType = (user, submitterRoleType, isRevision = false) => {
     const roleMapping = {
         "Author": "USER",
         "Editor": "EDITOR",
@@ -99,13 +103,47 @@ const validateSubmitterRoleType = (user, submitterRoleType) => {
         );
     }
 
-    if (user.role !== expectedRole) {
-        throw new AppError(
-            `You cannot submit as ${submitterRoleType}. Your account role is ${user.role}.`,
-            STATUS_CODES.FORBIDDEN,
-            "ROLE_MISMATCH",
-            { userRole: user.role, attemptedRoleType: submitterRoleType }
-        );
+    // NEW RULE: Only USER can submit as "Author"
+    if (submitterRoleType === "Author") {
+        if (user.role !== "USER") {
+            throw new AppError(
+                "Only users with USER role can submit manuscripts as Author",
+                STATUS_CODES.FORBIDDEN,
+                "INVALID_AUTHOR_ROLE",
+                { userRole: user.role, attemptedRoleType: submitterRoleType }
+            );
+        }
+        
+        // Authors cannot submit revisions (only new manuscripts)
+        if (isRevision) {
+            throw new AppError(
+                "Authors cannot submit revisions using this endpoint. Please use the submission update endpoint.",
+                STATUS_CODES.FORBIDDEN,
+                "AUTHOR_CANNOT_SUBMIT_REVISION"
+            );
+        }
+    }
+    
+    // NEW RULE: Editor/Tech Editor/Reviewer can ONLY submit revisions
+    if (["Editor", "Technical Editor", "Reviewer"].includes(submitterRoleType)) {
+        if (user.role !== expectedRole) {
+            throw new AppError(
+                `You cannot submit as ${submitterRoleType}. Your account role is ${user.role}.`,
+                STATUS_CODES.FORBIDDEN,
+                "ROLE_MISMATCH",
+                { userRole: user.role, attemptedRoleType: submitterRoleType }
+            );
+        }
+        
+        // These roles can ONLY submit revisions, not new manuscripts
+        if (!isRevision) {
+            throw new AppError(
+                `${submitterRoleType}s can only submit revisions, not new manuscripts`,
+                STATUS_CODES.FORBIDDEN,
+                "REVISION_ONLY_ROLE",
+                { userRole: user.role, roleType: submitterRoleType }
+            );
+        }
     }
 };
 
@@ -228,7 +266,7 @@ const sendReviewerInvitationEmail = async (submission, reviewer, token) => {
 };
 
 // ================================================
-// CREATE SUBMISSION
+// CREATE SUBMISSION (NEW MANUSCRIPTS ONLY)
 // ================================================
 
 const createSubmission = async (authorId, payload) => {
@@ -241,14 +279,15 @@ const createSubmission = async (authorId, payload) => {
         }
 
         // Validate submitterRoleType matches user's actual role
-        validateSubmitterRoleType(author, payload.submitterRoleType);
+        // isRevision = false (this is for NEW submissions only)
+        validateSubmitterRoleType(author, payload.submitterRoleType, false);
 
-        // Only users with role "USER" can submit as "Author"
-        if (payload.submitterRoleType === "Author" && author.role !== "USER") {
+        // Only users with role "USER" can create NEW submissions
+        if (payload.submitterRoleType !== "Author") {
             throw new AppError(
-                "Only users with USER role can submit manuscripts as Author",
+                "Only Authors can create new submissions. Other roles can only submit revisions.",
                 STATUS_CODES.FORBIDDEN,
-                "INVALID_AUTHOR_ROLE"
+                "NEW_SUBMISSION_AUTHOR_ONLY"
             );
         }
 
@@ -257,36 +296,11 @@ const createSubmission = async (authorId, payload) => {
             ...payload,
             author: authorId,
             status: payload.saveAsDraft ? "DRAFT" : "SUBMITTED",
+            isRevision: false,  // NEW: This is not a revision
+            revisionStage: "INITIAL_SUBMISSION",  // NEW
         });
 
         console.log("🟢 [SERVICE] Submission created:", submission._id);
-
-        // // Create initial cycle and version if files are uploaded
-        // if (!payload.saveAsDraft && submission.blindManuscriptFile) {
-        //     try {
-        //         // Create cycle
-        //         const cycle = await createInitialCycle(submission._id);
-        //         submission.currentCycleId = cycle._id;
-
-        //         // Create manuscript version
-        //         const fileRefs = [submission.blindManuscriptFile.fileUrl];
-        //         if (submission.coverLetter) fileRefs.push(submission.coverLetter.fileUrl);
-
-        //         await createManuscriptVersion(
-        //             submission._id,
-        //             cycle._id,
-        //             authorId,
-        //             author.role,
-        //             fileRefs
-        //         );
-
-        //         await submission.save();
-        //         console.log("🟢 [SERVICE] Initial cycle and version created");
-        //     } catch (cycleError) {
-        //         console.error("❌ [SERVICE] Failed to create cycle/version:", cycleError);
-        //         // Don't fail the submission, just log the error
-        //     }
-        // }
 
         await submission.populate("author", "firstName lastName email");
 
@@ -416,6 +430,15 @@ const submitManuscript = async (submissionId, userId, payload) => {
         submission.copyrightAgreement = payload.copyrightAgreement;
         submission.pdfPreviewConfirmed = payload.pdfPreviewConfirmed;
         submission.suggestedReviewers = payload.suggestedReviewers;
+
+        // NEW: Initialize suggested reviewer responses tracking
+        submission.suggestedReviewerResponses = {
+            totalSuggested: payload.suggestedReviewers.length,
+            accepted: 0,
+            declined: 0,
+            pending: payload.suggestedReviewers.length,
+            majorityMet: false,
+        };
 
         for (let i = 0; i < submission.suggestedReviewers.length; i++) {
             const token = submission.generateReviewerInvitationToken(i);
@@ -559,7 +582,7 @@ const listSubmissions = async (userId, userRole, filters = {}) => {
 };
 
 // ================================================
-// NEW FUNCTION: Get Submission Timeline (Cycles)
+// GET SUBMISSION TIMELINE (Cycles)
 // ================================================
 
 const getSubmissionTimeline = async (submissionId, userId, userRole) => {
@@ -850,6 +873,427 @@ const moveToReview = async (submissionId, userId, userRole) => {
     }
 };
 
+// ════════════════════════════════════════════════════════════════
+// NEW FUNCTIONS FOR REVISIONS AND DECISIONS
+// ════════════════════════════════════════════════════════════════
+
+// ================================================
+// SUBMIT REVISION (Editor/Tech Editor/Reviewer)
+// ================================================
+
+const submitRevision = async (userId, payload) => {
+    try {
+        console.log("🔵 [SERVICE] submitRevision started");
+        
+        const user = await User.findById(userId);
+        if (!user) {
+            throw new AppError("User not found", STATUS_CODES.NOT_FOUND, "USER_NOT_FOUND");
+        }
+        
+        // Validate submitterRoleType (isRevision = true)
+        validateSubmitterRoleType(user, payload.submitterRoleType, true);
+        
+        // Find original submission
+        const originalSubmission = await Submission.findById(payload.originalSubmissionId);
+        if (!originalSubmission) {
+            throw new AppError(
+                "Original submission not found",
+                STATUS_CODES.NOT_FOUND,
+                "ORIGINAL_SUBMISSION_NOT_FOUND"
+            );
+        }
+        
+        // Verify user has permission to submit revision
+        if (payload.submitterRoleType === "Editor") {
+            // Must be assigned editor
+            if (!originalSubmission.assignedEditor || 
+                originalSubmission.assignedEditor.toString() !== userId) {
+                throw new AppError(
+                    "You are not the assigned editor for this submission",
+                    STATUS_CODES.FORBIDDEN,
+                    "NOT_ASSIGNED_EDITOR"
+                );
+            }
+        } else if (payload.submitterRoleType === "Technical Editor") {
+            // Must be in assignedTechnicalEditors array
+            const isAssigned = originalSubmission.assignedTechnicalEditors.some(
+                te => te.technicalEditor.toString() === userId
+            );
+            if (!isAssigned) {
+                throw new AppError(
+                    "You are not assigned as technical editor for this submission",
+                    STATUS_CODES.FORBIDDEN,
+                    "NOT_ASSIGNED_TECH_EDITOR"
+                );
+            }
+        } else if (payload.submitterRoleType === "Reviewer") {
+            // Must be in assignedReviewers array
+            const isAssigned = originalSubmission.assignedReviewers.some(
+                r => r.reviewer.toString() === userId
+            );
+            if (!isAssigned) {
+                throw new AppError(
+                    "You are not assigned as reviewer for this submission",
+                    STATUS_CODES.FORBIDDEN,
+                    "NOT_ASSIGNED_REVIEWER"
+                );
+            }
+        }
+        
+        // Create revision submission
+        const revision = await Submission.create({
+            originalSubmissionId: payload.originalSubmissionId,
+            submitterRoleType: payload.submitterRoleType,
+            isRevision: true,
+            revisionStage: payload.revisionStage,
+            
+            // Copy core fields from original
+            articleType: originalSubmission.articleType,
+            title: originalSubmission.title,
+            author: originalSubmission.author,
+            
+            // Revision-specific data
+            blindManuscriptFile: payload.revisedManuscript,
+            supplementaryFiles: payload.attachments || [],
+            
+            // Add remarks as internal note
+            internalNotes: [{
+                note: payload.remarks,
+                addedBy: userId,
+                addedAt: new Date(),
+                isConfidential: false,
+            }],
+            
+            status: "SUBMITTED",
+            submittedAt: new Date(),
+        });
+        
+        // Create new cycle and version for this revision
+        try {
+            const currentCycleNumber = await SubmissionCycle.countDocuments({
+                submissionId: payload.originalSubmissionId
+            });
+            
+            const cycle = await SubmissionCycle.create({
+                submissionId: payload.originalSubmissionId,
+                cycleNumber: currentCycleNumber + 1,
+                status: "IN_PROGRESS",
+            });
+            
+            revision.currentCycleId = cycle._id;
+            
+            // Create manuscript version
+            const fileRefs = [];
+            if (payload.revisedManuscript) fileRefs.push(payload.revisedManuscript.fileUrl);
+            if (payload.attachments) fileRefs.push(...payload.attachments.map(a => a.fileUrl));
+            
+            await createManuscriptVersion(
+                payload.originalSubmissionId,
+                cycle._id,
+                userId,
+                user.role,
+                fileRefs
+            );
+            
+            await revision.save();
+            
+        } catch (cycleError) {
+            console.error("❌ [SERVICE] Failed to create cycle/version:", cycleError);
+        }
+        
+        await revision.populate("author", "firstName lastName email");
+        
+        console.log("✅ [SERVICE] submitRevision completed successfully");
+        
+        return {
+            message: "Revision submitted successfully",
+            revision,
+        };
+        
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in submitRevision:", error);
+        throw new AppError(
+            "Failed to submit revision",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "SUBMIT_REVISION_ERROR",
+            { originalError: error.message }
+        );
+    }
+};
+
+// ================================================
+// EDITOR DECISION (Accept/Reject)
+// ================================================
+
+const makeEditorDecision = async (submissionId, editorId, decision, decisionStage, remarks, attachments) => {
+    try {
+        console.log("🔵 [SERVICE] makeEditorDecision started");
+        
+        const submission = await findSubmissionById(submissionId);
+        if (!submission) {
+            throw new AppError("Submission not found", STATUS_CODES.NOT_FOUND, "SUBMISSION_NOT_FOUND");
+        }
+        
+        // Verify user is Editor
+        const editor = await User.findById(editorId);
+        if (!editor || editor.role !== "EDITOR") {
+            throw new AppError(
+                "Only editors can make decisions",
+                STATUS_CODES.FORBIDDEN,
+                "NOT_EDITOR"
+            );
+        }
+        
+        // Verify editor is assigned to this submission
+        if (!submission.assignedEditor || 
+            submission.assignedEditor.toString() !== editorId) {
+            throw new AppError(
+                "You are not the assigned editor for this submission",
+                STATUS_CODES.FORBIDDEN,
+                "NOT_ASSIGNED_EDITOR"
+            );
+        }
+        
+        // Check if editor can still make decisions (max 4) - query from SubmissionCycle
+        const editorDecisions = await SubmissionCycle.countDocuments({
+            submissionId: submission._id,
+            "editorDecision.type": { $in: ["ACCEPT", "REJECT"] }
+        });
+        
+        if (editorDecisions >= 4) {
+            throw new AppError(
+                "Editor has exhausted all 4 decision opportunities",
+                STATUS_CODES.FORBIDDEN,
+                "EDITOR_DECISION_LIMIT_REACHED",
+                { decisionsUsed: editorDecisions }
+            );
+        }
+        
+        // Get or create current cycle
+        let currentCycle = await SubmissionCycle.getCurrentCycle(submission._id);
+        
+        if (!currentCycle) {
+            currentCycle = await SubmissionCycle.create({
+                submissionId: submission._id,
+                cycleNumber: editorDecisions + 1,
+                status: "IN_PROGRESS",
+            });
+        }
+        
+        // Record decision in SubmissionCycle
+        currentCycle.editorDecision = {
+            type: decision,
+            reason: remarks,
+            decidedAt: new Date(),
+            decisionNumber: editorDecisions + 1,
+            decisionStage: decisionStage,
+        };
+        
+        await currentCycle.save();
+        
+        // Update submission status
+        if (decision === "REJECT") {
+            submission.status = "REJECTED";
+            submission.rejectedAt = new Date();
+        } else if (decision === "ACCEPT") {
+            submission.status = "ACCEPTED";
+            submission.acceptedAt = new Date();
+        }
+        
+        await submission.save();
+        
+        console.log("✅ [SERVICE] makeEditorDecision completed successfully");
+        
+        return {
+            message: `Submission ${decision === "ACCEPT" ? "accepted" : "rejected"} successfully`,
+            submission,
+            decisionsRemaining: 4 - (editorDecisions + 1),
+        };
+        
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in makeEditorDecision:", error);
+        throw new AppError(
+            "Failed to make decision",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "EDITOR_DECISION_ERROR",
+            { originalError: error.message }
+        );
+    }
+};
+
+// ================================================
+// TECHNICAL EDITOR DECISION
+// ================================================
+
+const makeTechnicalEditorDecision = async (submissionId, techEditorId, decision, remarks, attachments) => {
+    try {
+        console.log("🔵 [SERVICE] makeTechnicalEditorDecision started");
+        
+        const submission = await findSubmissionById(submissionId);
+        if (!submission) {
+            throw new AppError("Submission not found", STATUS_CODES.NOT_FOUND, "SUBMISSION_NOT_FOUND");
+        }
+        
+        // Verify user is Technical Editor
+        const techEditor = await User.findById(techEditorId);
+        if (!techEditor || techEditor.role !== "TECHNICAL_EDITOR") {
+            throw new AppError(
+                "Only technical editors can make decisions",
+                STATUS_CODES.FORBIDDEN,
+                "NOT_TECHNICAL_EDITOR"
+            );
+        }
+        
+        // Verify tech editor is assigned to this submission
+        const isAssigned = submission.assignedTechnicalEditors.some(
+            te => te.technicalEditor.toString() === techEditorId
+        );
+        if (!isAssigned) {
+            throw new AppError(
+                "You are not assigned as technical editor for this submission",
+                STATUS_CODES.FORBIDDEN,
+                "NOT_ASSIGNED_TECH_EDITOR"
+            );
+        }
+        
+        // Check if tech editor has already decided (only 1 chance) - query from SubmissionCycle
+        const existingDecision = await SubmissionCycle.findOne({
+            submissionId: submission._id,
+            "technicalEditorReview.decision": { $exists: true }
+        });
+        
+        if (existingDecision) {
+            throw new AppError(
+                "Technical Editor has already made a decision (only 1 chance allowed)",
+                STATUS_CODES.FORBIDDEN,
+                "TECH_EDITOR_ALREADY_DECIDED",
+                { previousDecision: existingDecision.technicalEditorReview.decision }
+            );
+        }
+        
+        // Get or create current cycle
+        let currentCycle = await SubmissionCycle.getCurrentCycle(submission._id);
+        
+        if (!currentCycle) {
+            currentCycle = await SubmissionCycle.create({
+                submissionId: submission._id,
+                cycleNumber: 1,
+                status: "IN_PROGRESS",
+            });
+        }
+        
+        // Record decision in SubmissionCycle
+        currentCycle.technicalEditorReview = {
+            reviewedBy: techEditorId,
+            decision: decision,
+            remarks: remarks,
+            attachmentRefs: attachments ? attachments.map(a => a.fileUrl) : [],
+            reviewedAt: new Date(),
+        };
+        
+        await currentCycle.save();
+        
+        // If REJECT, end the process immediately
+        if (decision === "REJECT") {
+            submission.status = "REJECTED";
+            submission.rejectedAt = new Date();
+            await submission.save();
+        }
+        
+        console.log("✅ [SERVICE] makeTechnicalEditorDecision completed successfully");
+        
+        return {
+            message: `Submission ${decision === "ACCEPT" ? "accepted" : "rejected"} by Technical Editor`,
+            submission,
+            note: "Technical Editor has used their only decision chance",
+        };
+        
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in makeTechnicalEditorDecision:", error);
+        throw new AppError(
+            "Failed to make decision",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "TECH_EDITOR_DECISION_ERROR",
+            { originalError: error.message }
+        );
+    }
+};
+
+// ================================================
+// CHECK CO-AUTHOR CONSENT STATUS
+// ================================================
+
+const checkCoAuthorConsentStatus = async (submissionId) => {
+    try {
+        console.log("🔵 [SERVICE] checkCoAuthorConsentStatus started");
+        
+        const submission = await findSubmissionById(submissionId, { populate: true });
+        if (!submission) {
+            throw new AppError("Submission not found", STATUS_CODES.NOT_FOUND, "SUBMISSION_NOT_FOUND");
+        }
+        
+        const consentStatus = submission.checkCoAuthorConsent();
+        
+        console.log("✅ [SERVICE] checkCoAuthorConsentStatus completed successfully");
+        
+        return {
+            message: consentStatus.message,
+            consentStatus,
+        };
+        
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in checkCoAuthorConsentStatus:", error);
+        throw new AppError(
+            "Failed to check consent status",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "CONSENT_CHECK_ERROR",
+            { originalError: error.message }
+        );
+    }
+};
+
+// ================================================
+// CHECK REVIEWER MAJORITY
+// ================================================
+
+const checkReviewerMajorityStatus = async (submissionId) => {
+    try {
+        console.log("🔵 [SERVICE] checkReviewerMajorityStatus started");
+        
+        const submission = await findSubmissionById(submissionId, { populate: true });
+        if (!submission) {
+            throw new AppError("Submission not found", STATUS_CODES.NOT_FOUND, "SUBMISSION_NOT_FOUND");
+        }
+        
+        const majorityStatus = submission.checkReviewerMajority();
+        
+        console.log("✅ [SERVICE] checkReviewerMajorityStatus completed successfully");
+        
+        return {
+            message: majorityStatus.message,
+            majorityStatus,
+        };
+        
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        console.error("❌ [SERVICE] Unexpected error in checkReviewerMajorityStatus:", error);
+        throw new AppError(
+            "Failed to check reviewer majority",
+            STATUS_CODES.INTERNAL_SERVER_ERROR,
+            "MAJORITY_CHECK_ERROR",
+            { originalError: error.message }
+        );
+    }
+};
+
+// ================================================
+// EXPORTS
+// ================================================
+
 export default {
     createSubmission,
     getSubmissionById,
@@ -862,4 +1306,10 @@ export default {
     processCoAuthorConsent,
     moveToReview,
     getSubmissionTimeline,
+    // NEW EXPORTS:
+    submitRevision,
+    makeEditorDecision,
+    makeTechnicalEditorDecision,
+    checkCoAuthorConsentStatus,
+    checkReviewerMajorityStatus,
 };

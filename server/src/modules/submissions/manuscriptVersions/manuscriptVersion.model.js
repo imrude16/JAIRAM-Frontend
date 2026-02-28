@@ -27,7 +27,6 @@ const manuscriptVersionSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "SubmissionCycle",
             required: [true, "Cycle number reference is required"],
-            index: true,
         },
 
         // ══════════════════════════════════════════════════════════
@@ -58,7 +57,6 @@ const manuscriptVersionSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "User",
             required: [true, "Uploader ID is required"],
-            index: true,
         },
 
         uploaderRole: {

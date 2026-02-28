@@ -9,6 +9,7 @@ import { validateChecklistResponses, CURRENT_CHECKLIST } from "../../common/cons
  * Follows same pattern as users.validator.js
  * Validates all UI fields from screenshots
  * Integrates with checklist validation
+ * + NEW SCHEMAS FOR REVISIONS AND DECISIONS
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -106,8 +107,6 @@ export const createSubmissionSchema = {
                 "any.only": "Please select a valid article type",
                 "any.required": "Article type is required",
             }),
-
-        // ... rest of the fields remain the same ...
 
         // Title
         title: Joi.string()
@@ -565,5 +564,150 @@ export const listSubmissionsSchema = {
         sortBy: Joi.string().valid("submittedAt", "lastModifiedAt", "title", "status").default("submittedAt").optional(),
         sortOrder: Joi.string().valid("asc", "desc").default("desc").optional(),
         search: Joi.string().trim().min(2).max(100).optional(),
+    }),
+};
+
+// ════════════════════════════════════════════════════════════════
+// NEW SCHEMAS FOR REVISIONS AND DECISIONS
+// ════════════════════════════════════════════════════════════════
+
+// ================================================
+// SUBMIT REVISION SCHEMA (Editor/Tech Editor/Reviewer)
+// ================================================
+
+export const submitRevisionSchema = {
+    body: Joi.object({
+        // Original submission being revised
+        originalSubmissionId: objectIdField("Original Submission ID").required(),
+        
+        // Who is submitting this revision?
+        submitterRoleType: Joi.string()
+            .valid("Editor", "Technical Editor", "Reviewer")
+            .required()
+            .messages({
+                "any.only": "Only Editor, Technical Editor, or Reviewer can submit revisions",
+                "any.required": "Submitter role type is required",
+            }),
+        
+        // Which stage of revision?
+        revisionStage: Joi.string()
+            .valid(
+                "EDITOR_TO_TECH_EDITOR",
+                "TECH_EDITOR_TO_EDITOR",
+                "EDITOR_TO_REVIEWER",
+                "REVIEWER_TO_EDITOR",
+                "EDITOR_TO_AUTHOR"
+            )
+            .required(),
+        
+        // Remarks (required)
+        remarks: Joi.string()
+            .trim()
+            .min(10)
+            .max(5000)
+            .required()
+            .messages({
+                "string.min": "Remarks must be at least 10 characters",
+                "string.max": "Remarks cannot exceed 5000 characters",
+                "any.required": "Remarks are required",
+            }),
+        
+        // File uploads (optional)
+        revisedManuscript: fileSchema.optional(),
+        attachments: Joi.array().items(fileSchema).max(10).optional(),
+    }),
+};
+
+// ================================================
+// EDITOR DECISION SCHEMA (Accept/Reject)
+// ================================================
+
+export const editorDecisionSchema = {
+    params: Joi.object({
+        id: objectIdField("Submission ID").required(),
+    }),
+    
+    body: Joi.object({
+        decision: Joi.string()
+            .valid("ACCEPT", "REJECT")
+            .required()
+            .messages({
+                "any.only": "Decision must be either ACCEPT or REJECT",
+                "any.required": "Decision is required",
+            }),
+        
+        decisionStage: Joi.string()
+            .valid(
+                "INITIAL_SCREENING",
+                "POST_TECH_EDITOR",
+                "POST_REVIEWER",
+                "FINAL_DECISION"
+            )
+            .required()
+            .messages({
+                "any.only": "Invalid decision stage",
+                "any.required": "Decision stage is required",
+            }),
+        
+        remarks: Joi.string()
+            .trim()
+            .min(10)
+            .max(5000)
+            .optional()
+            .allow(""),
+        
+        attachments: Joi.array().items(fileSchema).max(5).optional(),
+    }),
+};
+
+// ================================================
+// TECHNICAL EDITOR DECISION SCHEMA
+// ================================================
+
+export const technicalEditorDecisionSchema = {
+    params: Joi.object({
+        id: objectIdField("Submission ID").required(),
+    }),
+    
+    body: Joi.object({
+        decision: Joi.string()
+            .valid("ACCEPT", "REJECT")
+            .required()
+            .messages({
+                "any.only": "Decision must be either ACCEPT or REJECT",
+                "any.required": "Decision is required",
+            }),
+        
+        remarks: Joi.string()
+            .trim()
+            .min(10)
+            .max(5000)
+            .required()
+            .messages({
+                "string.min": "Remarks must be at least 10 characters",
+                "any.required": "Remarks are required for your decision",
+            }),
+        
+        attachments: Joi.array().items(fileSchema).max(5).optional(),
+    }),
+};
+
+// ================================================
+// CO-AUTHOR CONSENT CHECK SCHEMA
+// ================================================
+
+export const checkCoAuthorConsentSchema = {
+    params: Joi.object({
+        id: objectIdField("Submission ID").required(),
+    }),
+};
+
+// ================================================
+// REVIEWER MAJORITY CHECK SCHEMA
+// ================================================
+
+export const checkReviewerMajoritySchema = {
+    params: Joi.object({
+        id: objectIdField("Submission ID").required(),
     }),
 };

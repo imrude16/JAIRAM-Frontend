@@ -47,7 +47,6 @@ const roleChangeRequestSchema = new Schema(
             type: Schema.Types.ObjectId,
             ref: "User",
             required: [true, "Requester ID is required"],
-            index: true,
         },
 
         reason: {
@@ -74,7 +73,6 @@ const roleChangeRequestSchema = new Schema(
         reviewedBy: {
             type: Schema.Types.ObjectId,
             ref: "User",
-            index: true,
         },
 
         reviewedAt: Date,

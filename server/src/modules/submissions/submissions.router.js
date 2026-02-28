@@ -15,15 +15,22 @@ import {
     assignEditorSchema,
     coAuthorConsentSchema,
     listSubmissionsSchema,
+    // NEW IMPORTS:
+    submitRevisionSchema,
+    editorDecisionSchema,
+    technicalEditorDecisionSchema,
+    checkCoAuthorConsentSchema,
+    checkReviewerMajoritySchema,
 } from "./submissions.validator.js";
 
 /**
  * ════════════════════════════════════════════════════════════════
- * SUBMISSION ROUTES - COMPLETE VERSION
+ * SUBMISSION ROUTES - COMPLETE VERSION WITH REVISIONS
  * ════════════════════════════════════════════════════════════════
  * 
  * Follows same pattern as users.router.js
  * Proper route ordering (specific before dynamic)
+ * + NEW: Routes for revisions and decisions
  * ════════════════════════════════════════════════════════════════
  */
 
@@ -39,6 +46,12 @@ const {
     processCoAuthorConsent,
     moveToReview,
     getSubmissionTimeline,
+    // NEW DESTRUCTURING:
+    submitRevision,
+    makeEditorDecision,
+    makeTechnicalEditorDecision,
+    checkCoAuthorConsent,
+    checkReviewerMajority,
 } = submissionController;
 
 const router = Router();
@@ -56,7 +69,7 @@ const router = Router();
  * 
  * Auth: Required (any logged-in user)
  * Returns: List of submissions based on user role
- * - USER: Their own submissions
+ * - USER: Their own submissions + submissions where they're accepted co-authors
  * - REVIEWER: Assigned submissions
  * - EDITOR: Assigned submissions
  * - ADMIN: All submissions
@@ -74,6 +87,7 @@ router.get(
  * POST /api/submissions
  * Headers: Authorization: Bearer <token>
  * Body: {
+ *   submitterRoleType: "Author",
  *   articleType: "Original Article",
  *   title: "...",
  *   runningTitle: "...",
@@ -88,6 +102,7 @@ router.get(
  * Auth: Required (any logged-in user can create)
  * Returns: Created submission (DRAFT status)
  * Note: Author automatically set from req.user.id
+ * Note: Only submitterRoleType "Author" allowed for new submissions
  */
 router.post(
     "/",
@@ -234,6 +249,7 @@ router.get(
     validateRequest(getSubmissionByIdSchema),
     asyncHandler(getSubmissionTimeline)
 );
+
 // ============================================================
 // EDITOR/ADMIN ROUTES
 // ============================================================
@@ -361,6 +377,185 @@ router.post(
     allowRoles(ROLES.EDITOR, ROLES.ADMIN),
     validateRequest(getSubmissionByIdSchema),
     asyncHandler(moveToReview)
+);
+
+// ════════════════════════════════════════════════════════════════
+// NEW ROUTES FOR REVISIONS & DECISIONS
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * SUBMIT REVISION (Editor/Tech Editor/Reviewer)
+ * 
+ * POST /api/submissions/revisions
+ * Headers: Authorization: Bearer <token>
+ * Body: {
+ *   originalSubmissionId: "...",
+ *   submitterRoleType: "Editor" | "Technical Editor" | "Reviewer",
+ *   revisionStage: "EDITOR_TO_TECH_EDITOR" | "TECH_EDITOR_TO_EDITOR" | ...,
+ *   remarks: "...",
+ *   revisedManuscript?: {...},
+ *   attachments?: [...]
+ * }
+ * 
+ * Auth: Required + EDITOR/TECHNICAL_EDITOR/REVIEWER role
+ * Purpose: Submit revised manuscript with remarks
+ * 
+ * Workflow:
+ * - Editor → Technical Editor: revisionStage = "EDITOR_TO_TECH_EDITOR"
+ * - Technical Editor → Editor: revisionStage = "TECH_EDITOR_TO_EDITOR"
+ * - Editor → Reviewer: revisionStage = "EDITOR_TO_REVIEWER"
+ * - Reviewer → Editor: revisionStage = "REVIEWER_TO_EDITOR"
+ * - Editor → Author: revisionStage = "EDITOR_TO_AUTHOR"
+ * 
+ * Validation:
+ * - User must be assigned to the original submission
+ * - submitterRoleType must match user's role
+ * - Creates new SubmissionCycle and ManuscriptVersion
+ */
+router.post(
+    "/revisions",
+    requireAuth,
+    allowRoles(ROLES.EDITOR, ROLES.TECHNICAL_EDITOR, ROLES.REVIEWER),
+    validateRequest(submitRevisionSchema),
+    asyncHandler(submitRevision)
+);
+
+/**
+ * EDITOR DECISION (Accept/Reject)
+ * 
+ * POST /api/submissions/:id/editor-decision
+ * Headers: Authorization: Bearer <token>
+ * Body: {
+ *   decision: "ACCEPT" | "REJECT",
+ *   decisionStage: "INITIAL_SCREENING" | "POST_TECH_EDITOR" | "POST_REVIEWER" | "FINAL_DECISION",
+ *   remarks?: "...",
+ *   attachments?: [...]
+ * }
+ * 
+ * Auth: Required + EDITOR role
+ * Limit: Editor can make max 4 decisions per submission
+ * 
+ * Decision Stages:
+ * 1. INITIAL_SCREENING - Editor's first review after submission
+ * 2. POST_TECH_EDITOR - After receiving Technical Editor's review
+ * 3. POST_REVIEWER - After receiving Reviewer feedback
+ * 4. FINAL_DECISION - Final accept/reject after all revisions
+ * 
+ * Returns:
+ * - Success: { submission, decisionsRemaining: 3 }
+ * - Error (403): If editor has exhausted 4 chances
+ * 
+ * Side Effects:
+ * - Records decision in SubmissionCycle (not in Submission schema)
+ * - If REJECT: Updates submission.status to "REJECTED"
+ * - If ACCEPT: Updates submission.status to "ACCEPTED"
+ */
+router.post(
+    "/:id/editor-decision",
+    requireAuth,
+    allowRoles(ROLES.EDITOR, ROLES.ADMIN),
+    validateRequest(editorDecisionSchema),
+    asyncHandler(makeEditorDecision)
+);
+
+/**
+ * TECHNICAL EDITOR DECISION (Accept/Reject)
+ * 
+ * POST /api/submissions/:id/tech-editor-decision
+ * Headers: Authorization: Bearer <token>
+ * Body: {
+ *   decision: "ACCEPT" | "REJECT",
+ *   remarks: "...",
+ *   attachments?: [...]
+ * }
+ * 
+ * Auth: Required + TECHNICAL_EDITOR role
+ * Limit: Technical Editor can make ONLY 1 decision (permanent)
+ * 
+ * Returns:
+ * - Success: { submission, note: "Technical Editor has used their only decision chance" }
+ * - Error (403): If technical editor has already decided
+ * 
+ * Side Effects:
+ * - Records decision in SubmissionCycle.technicalEditorReview
+ * - If REJECT: Submission.status = "REJECTED" (process ends immediately)
+ * - If ACCEPT: Process continues to next stage
+ * 
+ * Important: Unlike Editor who gets 4 chances, Tech Editor gets ONLY 1
+ */
+router.post(
+    "/:id/tech-editor-decision",
+    requireAuth,
+    allowRoles(ROLES.TECHNICAL_EDITOR, ROLES.ADMIN),
+    validateRequest(technicalEditorDecisionSchema),
+    asyncHandler(makeTechnicalEditorDecision)
+);
+
+/**
+ * CHECK CO-AUTHOR CONSENT STATUS
+ * 
+ * GET /api/submissions/:id/coauthor-consent-status
+ * Headers: Authorization: Bearer <token>
+ * 
+ * Auth: Required + EDITOR/ADMIN role
+ * Returns: Consent status for all co-authors
+ * 
+ * Response:
+ * {
+ *   allAccepted: true/false,
+ *   canProceed: true/false,
+ *   message: "...",
+ *   rejected?: [...], // If any rejected
+ *   pending?: [...]   // If any pending
+ * }
+ * 
+ * Use Case:
+ * - Editor checks if all co-authors accepted before proceeding
+ * - If ANY co-author rejects → submission CANNOT proceed
+ * - All must accept for submission to continue
+ */
+router.get(
+    "/:id/coauthor-consent-status",
+    requireAuth,
+    allowRoles(ROLES.EDITOR, ROLES.ADMIN),
+    validateRequest(checkCoAuthorConsentSchema),
+    asyncHandler(checkCoAuthorConsent)
+);
+
+/**
+ * CHECK REVIEWER MAJORITY STATUS
+ * 
+ * GET /api/submissions/:id/reviewer-majority-status
+ * Headers: Authorization: Bearer <token>
+ * 
+ * Auth: Required + EDITOR/ADMIN role
+ * Returns: Reviewer response count and majority status
+ * 
+ * Response:
+ * {
+ *   majorityMet: true/false,
+ *   message: "Majority achieved: 3/4 reviewers accepted",
+ *   accepted: 3,
+ *   total: 4,
+ *   pending?: 1
+ * }
+ * 
+ * Majority Rule:
+ * - More than 50% must accept (e.g., 3/4, 2/3)
+ * - If 4 suggested: Need 3 to accept
+ * - If 3 suggested: Need 2 to accept
+ * 
+ * Use Case:
+ * - Editor checks if majority of suggested reviewers accepted
+ * - Process can proceed with majority, not all reviewers needed
+ * - Unlike co-authors (ALL must accept), reviewers follow majority rule
+ */
+router.get(
+    "/:id/reviewer-majority-status",
+    requireAuth,
+    allowRoles(ROLES.EDITOR, ROLES.ADMIN),
+    validateRequest(checkReviewerMajoritySchema),
+    asyncHandler(checkReviewerMajority)
 );
 
 export default router;
